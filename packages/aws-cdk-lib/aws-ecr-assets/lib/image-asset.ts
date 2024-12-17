@@ -153,6 +153,13 @@ export interface DockerImageAssetInvalidationOptions {
    * @default true
    */
   readonly outputs?: boolean;
+
+  /**
+   * Use `provenance` while calculating the asset hash
+   *
+   * @default true
+   */
+  readonly provenance?: boolean;
 }
 
 /**
@@ -314,6 +321,17 @@ export interface DockerImageAssetOptions extends FingerprintOptions, FileFingerp
    * @default - cache is used
    */
   readonly cacheDisabled?: boolean;
+
+  /**
+   * Provenance option to pass to the `docker build` command.
+   *
+   * Docker BuildKit must be enabled to use the provenance flag
+   *
+   * @see https://docs.docker.com/build/buildkit/
+   *
+   * @default - false
+   */
+  readonly provenance?: boolean;
 }
 
 /**
@@ -426,6 +444,11 @@ export class DockerImageAsset extends Construct implements IAsset {
    */
   private readonly dockerBuildTarget?: string;
 
+  /**
+   * Provenance option to pass to the `docker build` command.
+   */
+  private readonly dockerBuildProvenance?: boolean;
+
   constructor(scope: Construct, id: string, props: DockerImageAssetProps) {
     super(scope, id);
 
@@ -481,6 +504,7 @@ export class DockerImageAsset extends Construct implements IAsset {
     if (props.invalidation?.buildArgs !== false && props.buildArgs) { extraHash.buildArgs = props.buildArgs; }
     if (props.invalidation?.buildSecrets !== false && props.buildSecrets) { extraHash.buildSecrets = props.buildSecrets; }
     if (props.invalidation?.buildSsh !== false && props.buildSsh) {extraHash.buildSsh = props.buildSsh; }
+    if (props.invalidation?.provenance !== false && props.provenance) {extraHash.provenance = props.provenance; }
     if (props.invalidation?.target !== false && props.target) { extraHash.target = props.target; }
     if (props.invalidation?.file !== false && props.file) { extraHash.file = props.file; }
     if (props.invalidation?.repositoryName !== false && props.repositoryName) { extraHash.repositoryName = props.repositoryName; }
@@ -513,6 +537,7 @@ export class DockerImageAsset extends Construct implements IAsset {
     this.dockerBuildArgs = props.buildArgs;
     this.dockerBuildSecrets = props.buildSecrets;
     this.dockerBuildSsh = props.buildSsh;
+    this.dockerBuildProvenance = props.provenance;
     this.dockerBuildTarget = props.target;
     this.dockerOutputs = props.outputs;
     this.dockerCacheFrom = props.cacheFrom;
@@ -525,6 +550,7 @@ export class DockerImageAsset extends Construct implements IAsset {
       dockerBuildArgs: this.dockerBuildArgs,
       dockerBuildSecrets: this.dockerBuildSecrets,
       dockerBuildSsh: this.dockerBuildSsh,
+      dockerBuildProvenance: this.dockerBuildProvenance,
       dockerBuildTarget: this.dockerBuildTarget,
       dockerFile: props.file,
       sourceHash: staging.assetHash,

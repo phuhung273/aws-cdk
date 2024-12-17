@@ -293,6 +293,14 @@ export interface DockerImageAssetSource {
    * @default - cache is used
    */
   readonly dockerCacheDisabled?: boolean;
+
+  /**
+   * Provenance option to pass to the `docker buildx` command.
+   *
+   *
+   * @default - false
+   */
+  readonly dockerBuildProvenance?: boolean;
 }
 
 /**
