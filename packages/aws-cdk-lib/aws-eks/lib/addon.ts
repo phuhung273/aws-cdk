@@ -1,5 +1,5 @@
 import { Construct } from 'constructs';
-import { ICluster } from './cluster';
+import { Cluster, ICluster } from './cluster';
 import { CfnAddon } from './eks.generated';
 import { ArnFormat, IResource, Resource, Stack, Fn } from '../../core';
 
@@ -143,5 +143,30 @@ export class Addon extends Resource implements IAddon {
       resource: 'addon',
       resourceName: `${this.clusterName}/${this.addonName}/`,
     });
+
+    const cluster = Cluster.fromClusterAttributes(this, 'Cluster', {
+      clusterName: this.clusterName,
+    });
+    cluster.connectAddon(resource);
   }
+}
+
+/**
+ * The type of compute resources to use for CoreDNS.
+ *
+ * @see https://docs.aws.amazon.com/eks/latest/userguide/workloads-add-ons-available-eks.html
+ */
+export enum AddonName {
+  VPC_CNI = 'vpc-cni',
+  COREDNS = 'coredns',
+  KUBE_PROXY = 'kube-proxy',
+  AWS_EBS_CSI_DRIVER = 'aws-ebs-csi-driver',
+  AWS_EFS_CSI_DRIVER = 'aws-efs-csi-driver',
+  AWS_MOUNTPOINT_S3_CSI_DRIVER = 'aws-mountpoint-s3-csi-driver',
+  SNAPSHOT_CONTROLLER = 'snapshot-controller',
+  EKS_NODE_MONITORING_AGENT = 'eks-node-monitoring-agent',
+  ADOT = 'adot',
+  AWS_GUARDDUTY_AGENT = 'aws-guardduty-agent',
+  AMAZON_CLOUDWATCH_OBSERVABILITY = 'amazon-cloudwatch-observability',
+  EKS_POD_IDENTITY_AGENT = 'eks-pod-identity-agent',
 }

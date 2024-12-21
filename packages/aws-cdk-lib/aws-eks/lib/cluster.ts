@@ -3,7 +3,7 @@ import * as path from 'path';
 import { Construct, Node } from 'constructs';
 import * as YAML from 'yaml';
 import { IAccessPolicy, IAccessEntry, AccessEntry, AccessPolicy, AccessScopeType } from './access-entry';
-import { IAddon, Addon } from './addon';
+import { IAddon, Addon, AddonName } from './addon';
 import { AlbController, AlbControllerOptions } from './alb-controller';
 import { AwsAuth } from './aws-auth';
 import { ClusterResource, clusterArnComponents } from './cluster-resource';
@@ -263,6 +263,13 @@ export interface ICluster extends IResource, ec2.IConnectable {
    * @param options options for adding auto scaling groups, like customizing the bootstrap script
    */
   connectAutoScalingGroupCapacity(autoScalingGroup: autoscaling.AutoScalingGroup, options: AutoScalingGroupOptions): void;
+
+  /**
+   * Connect an existing Addon to the EKS cluster.
+   *
+   * @param addon the Addon
+   */
+  connectAddon(addon: IAddon): void;
 }
 
 /**
@@ -1095,6 +1102,13 @@ abstract class ClusterBase extends Resource implements ICluster {
   private _spotInterruptHandler?: HelmChart;
 
   /**
+   * A map storing installed addons
+   * Key: unique Addon name
+   * Value: Addon instance
+   */
+  private _addonMap: Map<string, IAddon>;
+
+  /**
    * Manages the aws-auth config map.
    *
    * @internal
@@ -1279,6 +1293,39 @@ abstract class ClusterBase extends Resource implements ICluster {
       // be deleted before the controller.
       Node.of(this.albController).addDependency(autoScalingGroup);
     }
+  }
+
+  /**
+   * Connect an existing Addon to the EKS cluster.
+   *
+   * @param addon the Addon
+   */
+  public connectAddon(addon: IAddon) {
+    if (this._addonMap.has(addon.addonName)) {
+      throw new Error(`'Addon ${addon.addonName} already installed in cluster`);
+    }
+
+    this._addonMap.set(addon.addonName, addon);
+  }
+
+  /**
+   * Retrieves the EKS Pod Identity Agent addon for the EKS cluster.
+   *
+   * The EKS Pod Identity Agent is responsible for managing the temporary credentials
+   * used by pods in the cluster to access AWS resources. It runs as a DaemonSet on
+   * each node and provides the necessary credentials to the pods based on their
+   * associated service account.
+   *
+   */
+  public get eksPodIdentityAgent(): IAddon | undefined {
+    if (!this._addonMap.has(AddonName.EKS_POD_IDENTITY_AGENT)) {
+      this._addonMap[AddonName.EKS_POD_IDENTITY_AGENT] = new Addon(this, 'EksPodIdentityAgentAddon', {
+        cluster: this,
+        addonName: AddonName.EKS_POD_IDENTITY_AGENT,
+      });
+    }
+
+    return this._addonMap[AddonName.EKS_POD_IDENTITY_AGENT];
   }
 }
 
@@ -1465,11 +1512,6 @@ export class Cluster extends ClusterBase {
    * an Open ID Connect Provider instance
    */
   private _openIdConnectProvider?: iam.IOpenIdConnectProvider;
-
-  /**
-   * an EKS Pod Identity Agent instance
-   */
-  private _eksPodIdentityAgent?: IAddon;
 
   /**
    * An AWS Lambda layer that includes `kubectl` and `helm`
@@ -2006,26 +2048,6 @@ export class Cluster extends ClusterBase {
     }
 
     return this._openIdConnectProvider;
-  }
-
-  /**
-   * Retrieves the EKS Pod Identity Agent addon for the EKS cluster.
-   *
-   * The EKS Pod Identity Agent is responsible for managing the temporary credentials
-   * used by pods in the cluster to access AWS resources. It runs as a DaemonSet on
-   * each node and provides the necessary credentials to the pods based on their
-   * associated service account.
-   *
-   */
-  public get eksPodIdentityAgent(): IAddon | undefined {
-    if (!this._eksPodIdentityAgent) {
-      this._eksPodIdentityAgent = new Addon(this, 'EksPodIdentityAgentAddon', {
-        cluster: this,
-        addonName: 'eks-pod-identity-agent',
-      });
-    }
-
-    return this._eksPodIdentityAgent;
   }
 
   /**
