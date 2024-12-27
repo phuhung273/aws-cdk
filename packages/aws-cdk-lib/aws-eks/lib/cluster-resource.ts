@@ -51,6 +51,8 @@ export class ClusterResource extends Construct {
 
   public readonly adminRole: iam.Role;
 
+  public readonly nodeProxyAgentCodePath: string;
+
   constructor(scope: Construct, id: string, props: ClusterResourceProps) {
     super(scope, id);
 
@@ -65,6 +67,7 @@ export class ClusterResource extends Construct {
       onEventLayer: props.onEventLayer,
       securityGroup: props.clusterHandlerSecurityGroup,
     });
+    this.nodeProxyAgentCodePath = provider.nodeProxyAgentCodePath;
 
     this.adminRole = this.createAdminRole(provider, props);
 

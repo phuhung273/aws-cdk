@@ -1561,6 +1561,8 @@ export class Cluster extends ClusterBase {
 
   private readonly _kubectlResourceProvider: KubectlProvider;
 
+  public readonly nodeProxyAgentCodePath: string;
+
   /**
    * Initiates an EKS Cluster with the supplied arguments
    *
@@ -1704,6 +1706,8 @@ export class Cluster extends ClusterBase {
       tags: props.tags,
       logging: this.logging,
     });
+
+    this.nodeProxyAgentCodePath = resource.nodeProxyAgentCodePath;
 
     if (this.endpointAccess._config.privateAccess && privateSubnets.length !== 0) {
 

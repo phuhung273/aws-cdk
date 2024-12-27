@@ -349,6 +349,7 @@ export class InlineCode extends Code {
 export class AssetCode extends Code {
   public readonly isInline = false;
   private asset?: s3_assets.Asset;
+  private _assetPath: string = '';
 
   /**
    * @param path The path to the asset file or directory.
@@ -369,6 +370,8 @@ export class AssetCode extends Code {
       throw new Error(`Asset is already associated with another stack '${cdk.Stack.of(this.asset).stackName}'. ` +
         'Create a new Code instance for every stack.');
     }
+
+    this._assetPath = this.asset.assetPath;
 
     if (!this.asset.isZipArchive) {
       throw new Error(`Asset must be a .zip file or a directory (${this.path})`);
@@ -392,6 +395,10 @@ export class AssetCode extends Code {
 
     // https://github.com/aws/aws-cdk/issues/1432
     this.asset.addResourceMetadata(resource, resourceProperty);
+  }
+
+  public get assetPath() {
+    return this._assetPath;
   }
 }
 

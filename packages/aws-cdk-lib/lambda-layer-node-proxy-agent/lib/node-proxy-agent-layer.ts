@@ -7,13 +7,19 @@ import { FileSystem } from '../../core';
  * An AWS Lambda layer that includes the NPM dependency `proxy-agent`.
  */
 export class NodeProxyAgentLayer extends lambda.LayerVersion {
+  public readonly codePath: string;
+
   constructor(scope: Construct, id: string) {
+    const code = lambda.Code.fromAsset(ASSET_FILE, {
+      // we hash the layer directory (it contains the tools versions and Dockerfile) because hashing the zip is non-deterministic
+      assetHash: FileSystem.fingerprint(LAYER_SOURCE_DIR),
+    });
+
     super(scope, id, {
-      code: lambda.Code.fromAsset(ASSET_FILE, {
-        // we hash the layer directory (it contains the tools versions and Dockerfile) because hashing the zip is non-deterministic
-        assetHash: FileSystem.fingerprint(LAYER_SOURCE_DIR),
-      }),
+      code,
       description: '/opt/nodejs/node_modules/proxy-agent',
     });
+
+    this.codePath = code.assetPath;
   }
 }

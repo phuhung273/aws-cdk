@@ -58,11 +58,14 @@ export class ClusterResourceProvider extends NestedStack {
    */
   public readonly provider: cr.Provider;
 
+  public readonly nodeProxyAgentCodePath: string;
+
   private constructor(scope: Construct, id: string, props: ClusterResourceProviderProps) {
     super(scope, id);
 
     // The NPM dependency proxy-agent is required in order to support proxy routing with the AWS JS SDK.
     const nodeProxyAgentLayer = new NodeProxyAgentLayer(this, 'NodeProxyAgentLayer');
+    this.nodeProxyAgentCodePath = nodeProxyAgentLayer.codePath;
 
     const onEvent = new ClusterResourceOnEventFunction(this, 'OnEventHandler', {
       description: 'onEvent handler for EKS cluster resource provider',
