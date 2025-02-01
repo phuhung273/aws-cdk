@@ -483,7 +483,10 @@ Common config for both HTTP API and WebSocket API
 Represents a collection of route settings.
 
 ```ts
+declare const api: apigwv2.HttpApi;
+
 new apigwv2.HttpStage(this, 'HttpStageWithProperties', {
+  httpApi: api,
   throttle: {
     rateLimit: 1000,
     burstLimit: 1000,
