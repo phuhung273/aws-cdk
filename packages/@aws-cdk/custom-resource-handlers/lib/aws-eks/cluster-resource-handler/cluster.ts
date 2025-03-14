@@ -128,21 +128,14 @@ export class ClusterResourceHandler extends ResourceHandler {
       return this.onCreate();
     }
 
-    // We can only update one type of the UpdateTypes:
-    type UpdateTypes = {
-      updateLogging: boolean;
-      updateAccess: boolean;
-      updateVpc: boolean;
-      updateAuthMode: boolean;
-    };
     // validate updates
-    const updateTypes = Object.keys(updates) as (keyof UpdateTypes)[];
-    const enabledUpdateTypes = updateTypes.filter((type) => updates[type]);
+    const updateTypes = Object.keys(updates) as (keyof UpdateMap)[];
+    const enabledUpdateTypes = updateTypes.filter((type) => updates[type] && type !== 'updateTags');
     console.log(enabledUpdateTypes);
 
     if (enabledUpdateTypes.length > 1) {
       throw new Error(
-        'Only one type of update - VpcConfigUpdate, LoggingUpdate, EndpointAccessUpdate, or AuthModeUpdate can be allowed',
+        'Only one type of update - Version, VpcConfigUpdate, LoggingUpdate, EndpointAccessUpdate, or AuthModeUpdate can be allowed',
       );
     }
 
