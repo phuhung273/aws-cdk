@@ -297,4 +297,23 @@ describe('lambda', () => {
     // should be a literal string.
     expect(bindResult?.deploymentToken).toEqual(JSON.stringify({ functionName: 'myfunc' }));
   });
+
+  test('"createLambdaPermission" can be used to disable auto Lambda Permission provision', () => {
+    // GIVEN
+    const stack = new cdk.Stack();
+    const fn = new lambda.Function(stack, 'Handler', {
+      runtime: lambda.Runtime.NODEJS_LATEST,
+      code: lambda.Code.fromInline('foo'),
+      handler: 'index.handler',
+    });
+
+    const api = new apigateway.RestApi(stack, 'api');
+
+    // WHEN
+    const integ = new apigateway.LambdaIntegration(fn, { createLambdaPermission: false });
+    api.root.addMethod('GET', integ);
+
+    // THEN
+    Template.fromStack(stack).resourceCountIs('AWS::Lambda::Permission', 0);
+  });
 });

@@ -25,6 +25,15 @@ export interface LambdaIntegrationOptions extends IntegrationOptions {
    * @default true
    */
   readonly allowTestInvoke?: boolean;
+
+  /**
+   * Specify whether to automatically create Lambda Permission.
+   * 
+   * Can be helpful to overcome Lambda policy limitation @see https://repost.aws/knowledge-center/lambda-resource-based-policy-size-error
+   *
+   * @default true
+   */
+  readonly createLambdaPermission?: boolean;
 }
 
 /**
@@ -40,6 +49,7 @@ export interface LambdaIntegrationOptions extends IntegrationOptions {
 export class LambdaIntegration extends AwsIntegration {
   private readonly handler: lambda.IFunction;
   private readonly enableTest: boolean;
+  private readonly createLambdaPermission: boolean;
 
   constructor(handler: lambda.IFunction, options: LambdaIntegrationOptions = { }) {
     const proxy = options.proxy ?? true;
@@ -53,27 +63,31 @@ export class LambdaIntegration extends AwsIntegration {
 
     this.handler = handler;
     this.enableTest = options.allowTestInvoke ?? true;
+    this.createLambdaPermission = options.createLambdaPermission ?? true;
   }
 
   public bind(method: Method): IntegrationConfig {
     const bindResult = super.bind(method);
-    const principal = new iam.ServicePrincipal('apigateway.amazonaws.com');
 
-    const desc = `${Names.nodeUniqueId(method.api.node)}.${method.httpMethod}.${method.resource.path.replace(/\//g, '.')}`;
-
-    this.handler.addPermission(`ApiPermission.${desc}`, {
-      principal,
-      scope: method,
-      sourceArn: Lazy.string({ produce: () => method.methodArn }),
-    });
-
-    // add permission to invoke from the console
-    if (this.enableTest) {
-      this.handler.addPermission(`ApiPermission.Test.${desc}`, {
+    if (this.createLambdaPermission) {
+      const principal = new iam.ServicePrincipal('apigateway.amazonaws.com');
+  
+      const desc = `${Names.nodeUniqueId(method.api.node)}.${method.httpMethod}.${method.resource.path.replace(/\//g, '.')}`;
+  
+      this.handler.addPermission(`ApiPermission.${desc}`, {
         principal,
         scope: method,
-        sourceArn: method.testMethodArn,
+        sourceArn: Lazy.string({ produce: () => method.methodArn }),
       });
+  
+      // add permission to invoke from the console
+      if (this.enableTest) {
+        this.handler.addPermission(`ApiPermission.Test.${desc}`, {
+          principal,
+          scope: method,
+          sourceArn: method.testMethodArn,
+        });
+      }
     }
 
     let functionName;
