@@ -186,6 +186,22 @@ test('Allows use of custom bundling image', () => {
   }));
 });
 
+test('Auto detect uv image', () => {
+  const entry = path.join(__dirname, 'lambda-handler-uv');
+  const image = DockerImage.fromBuild(path.join(entry), {
+    file: 'Dockerfile.uv'
+  });
+
+  new PythonFunction(stack, 'function', {
+    entry,
+    runtime: Runtime.PYTHON_3_13,
+  });
+
+  expect(Bundling.bundle).toHaveBeenCalledWith(expect.objectContaining({
+    image,
+  }));
+});
+
 test('Skip bundling when stack does not require it', () => {
   const spy = jest.spyOn(stack, 'bundlingRequired', 'get').mockReturnValue(false);
   const entry = path.join(__dirname, 'lambda-handler');

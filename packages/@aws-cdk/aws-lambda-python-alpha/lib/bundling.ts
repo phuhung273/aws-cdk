@@ -1,8 +1,10 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { Architecture, AssetCode, Code, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { AssetStaging, BundlingFileAccess, BundlingOptions as CdkBundlingOptions, DockerImage, DockerVolume } from 'aws-cdk-lib/core';
 import { Packaging, DependenciesFile } from './packaging';
 import { BundlingOptions, ICommandHooks } from './types';
+import { findUpMultiple } from './utils';
 
 /**
  * Dependency files to exclude from the asset hash.
@@ -47,6 +49,20 @@ export interface BundlingProps extends BundlingOptions {
    * @default - BundlingFileAccess.BIND_MOUNT
    */
   bundlingFileAccess?: BundlingFileAccess;
+
+  /**
+   * The path to the dependencies lock file (`requirements.txt`, `poetry.lock`, `Pipfile.lock` or `uv.lock`).
+   *
+   * This will be used as the source for the volume mounted in the Docker
+   * container.
+   *
+   * Modules specified in `site-packages` will be installed using the right
+   * installer (`pip`, `poetry`, `pipenv` or `uv`) along with this lock file.
+   *
+   * @default - the path is found by walking up parent directories searching for
+   *   a `requirements.txt`, `poetry.lock`, `Pipfile.lock` or `uv.lock` file
+   */
+  readonly depsLockFilePath?: string;
 }
 
 /**
@@ -89,6 +105,8 @@ export class Bundling implements CdkBundlingOptions {
 
     const outputPath = path.posix.join(AssetStaging.BUNDLING_OUTPUT_DIR, outputPathSuffix);
 
+    const depsLockFilePath = findLockFile(props.depsLockFilePath);
+
     const bundlingCommands = this.createBundlingCommand({
       entry,
       inputDir: AssetStaging.BUNDLING_INPUT_DIR,
@@ -105,6 +123,7 @@ export class Bundling implements CdkBundlingOptions {
         IMAGE: runtime.bundlingImage.image,
       },
       platform: architecture.dockerPlatform,
+      file: depsLockFilePath?.includes(DependenciesFile.UV) ? 'Dockerfile.uv' : 'Dockerfile',
     });
     this.command = props.command ?? ['bash', '-c', chain(bundlingCommands)];
     this.entrypoint = props.entrypoint;
@@ -128,7 +147,10 @@ export class Bundling implements CdkBundlingOptions {
     ].filter(item => item).join(' '));
     bundlingCommands.push(`cd ${options.outputDir}`);
     bundlingCommands.push(packaging.exportCommand ?? '');
-    if (packaging.dependenciesFile) {
+
+    if (packaging.dependenciesFile == DependenciesFile.UV) {
+      bundlingCommands.push('uv sync');
+    } else if (packaging.dependenciesFile) {
       bundlingCommands.push(`python -m pip install -r ${DependenciesFile.PIP} -t ${options.outputDir}`);
     }
     bundlingCommands.push(...options.commandHooks?.afterBundling(options.inputDir, options.outputDir) ?? []);
@@ -151,4 +173,34 @@ interface BundlingCommandOptions {
  */
 function chain(commands: string[]): string {
   return commands.filter(c => !!c).join(' && ');
+}
+
+/**
+ * Checks given lock file or searches for a lock file
+ */
+function findLockFile(depsLockFilePath?: string): string | undefined {
+  if (depsLockFilePath) {
+    if (!fs.existsSync(depsLockFilePath)) {
+      throw new Error(`Lock file at ${depsLockFilePath} doesn't exist`);
+    }
+
+    if (!fs.statSync(depsLockFilePath).isFile()) {
+      throw new Error('`depsLockFilePath` should point to a file');
+    }
+
+    return path.resolve(depsLockFilePath);
+  }
+
+  const lockFiles = findUpMultiple([
+    DependenciesFile.PIP,
+    DependenciesFile.POETRY,
+    DependenciesFile.PIPENV,
+    DependenciesFile.UV,
+  ]);
+
+  if (lockFiles.length > 1) {
+    throw new Error(`Multiple package lock files found: ${lockFiles.join(', ')}. Please specify the desired one with \`depsLockFilePath\`.`);
+  }
+
+  return lockFiles?.[0];
 }
