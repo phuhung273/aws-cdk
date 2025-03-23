@@ -8,7 +8,7 @@ ARG PIP_EXTRA_INDEX_URL
 ARG HTTPS_PROXY
 # pipenv 2022.4.8 is the last version with Python 3.6 support
 ARG PIPENV_VERSION=2022.4.8
-ARG POETRY_VERSION=1.5.1
+ARG POETRY_VERSION=2.1.1
 
 # Add virtualenv path
 ENV PATH="/usr/app/venv/bin:$PATH"
@@ -35,6 +35,8 @@ RUN \
     chmod -R 777 /tmp/poetry-cache && \
 # Install pipenv and poetry
     pip install pipenv==$PIPENV_VERSION poetry==$POETRY_VERSION && \
+# Install poetry plugin for exporting requirements
+    poetry self add poetry-plugin-export && \
 # Ensure no temporary files remain in the caches
     rm -rf /tmp/pip-cache/* /tmp/poetry-cache/*
 
