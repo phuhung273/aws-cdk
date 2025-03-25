@@ -166,7 +166,7 @@ describe('Application Load Balancer', () => {
             ContainerName: 'web',
             ContainerPort: 80,
             TargetGroupArn: {
-              Ref: 'ServiceLBPublicListenerECSGroup0CC8688C',
+              Ref: 'ServiceLBPublicListenerweb80Group19D95C71',
             },
           },
         ],
@@ -670,6 +670,7 @@ describe('Application Load Balancer', () => {
         memoryLimitMiB: 512,
         taskImageOptions: {
           image: ecs.ContainerImage.fromRegistry('amazon/amazon-ecs-sample'),
+          containerPorts: [80, 90, 443],
         },
         enableExecuteCommand: true,
         loadBalancers: [
@@ -731,6 +732,140 @@ describe('Application Load Balancer', () => {
             Key: 'deletion_protection.enabled',
             Value: 'false',
           },
+        ],
+      });
+    });
+
+    test('errors when targetGroups is empty', () => {
+      // GIVEN
+      const stack = new Stack();
+      const vpc = new Vpc(stack, 'VPC');
+
+      // THEN
+      expect(() => {
+        new ApplicationMultipleTargetGroupsFargateService(stack, 'Service', {
+          cluster: new ecs.Cluster(stack, 'EcsCluster', { vpc }),
+          taskImageOptions: {
+            image: ContainerImage.fromRegistry('test'),
+          },
+          targetGroups: [],
+        });
+      }).toThrow(/At least one target group should be specified/);
+    });
+
+    test('multiple containers with multiple ports', () => {
+      // GIVEN
+      const stack = new Stack();
+      const vpc = new Vpc(stack, 'VPC');
+      const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
+
+      const taskDefinition = new ecs.FargateTaskDefinition(stack, 'FargateTaskDef');
+
+      taskDefinition.addContainer('first', {
+        image: ecs.ContainerImage.fromRegistry('first'),
+        essential: true,
+        portMappings: [
+          {
+            containerPort: 8081,
+            protocol: ecs.Protocol.TCP,
+          },
+          {
+            containerPort: 8003,
+            protocol: ecs.Protocol.TCP,
+          },
+        ],
+      });
+
+      taskDefinition.addContainer('second', {
+        image: ecs.ContainerImage.fromRegistry('second'),
+        portMappings: [
+          {
+            containerPort: 8002,
+            protocol: ecs.Protocol.TCP,
+          },
+        ],
+      });
+
+      // WHEN
+      new ApplicationMultipleTargetGroupsFargateService(stack, 'Service', {
+        cluster,
+        taskDefinition,
+        targetGroups: [
+          {
+            containerPort: 8081,
+            protocol: ecs.Protocol.TCP,
+          },
+          {
+            containerPort: 8002,
+            pathPattern: '/api/*',
+            priority: 2,
+            protocol: ecs.Protocol.TCP,
+          },
+          {
+            containerPort: 8003,
+            pathPattern: '/admin/*',
+            priority: 3,
+            protocol: ecs.Protocol.TCP,
+          },
+        ],
+      });
+
+      // THEN - stack contains a load balancer and a service
+      Template.fromStack(stack).resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', 1);
+
+      Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
+        LaunchType: 'FARGATE',
+        LoadBalancers: [
+          {
+            ContainerName: 'first',
+            ContainerPort: 8081,
+            TargetGroupArn: {
+              Ref: 'ServiceLBPublicListenerECSTargetGroupfirst8081Group6E3D7B19',
+            },
+          },
+          {
+            ContainerName: 'first',
+            ContainerPort: 8003,
+            TargetGroupArn: {
+              Ref: 'ServiceLBPublicListenerECSTargetGroupfirst8003Group1872FD81',
+            },
+          },
+          {
+            ContainerName: 'second',
+            ContainerPort: 8002,
+            TargetGroupArn: {
+              Ref: 'ServiceLBPublicListenerECSTargetGroupsecond8002Group01B586F2',
+            },
+          },
+        ],
+      });
+
+      Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
+        ContainerDefinitions: [
+          Match.objectLike({
+            Image: 'first',
+            Name: 'first',
+            PortMappings: [
+              {
+                ContainerPort: 8081,
+                Protocol: 'tcp',
+              },
+              {
+                ContainerPort: 8003,
+                Protocol: 'tcp',
+              },
+            ],
+          }),
+          Match.objectLike({
+            Image: 'second',
+            Name: 'second',
+            PortMappings: [
+              {
+                ContainerPort: 8002,
+                Protocol: 'tcp',
+              },
+            ],
+          }),
         ],
       });
     });
@@ -816,7 +951,7 @@ describe('Network Load Balancer', () => {
             ContainerName: 'web',
             ContainerPort: 80,
             TargetGroupArn: {
-              Ref: 'ServiceLBPublicListenerECSGroup0CC8688C',
+              Ref: 'ServiceLBPublicListenerweb80Group19D95C71',
             },
           },
         ],
@@ -1148,25 +1283,74 @@ describe('Network Load Balancer', () => {
       }).toThrow(/You must specify one of: taskDefinition or image/);
     });
 
+    test('targetGroups generated from containerPorts when targetGroups not specified', () => {
+      // GIVEN
+      const stack = new Stack();
+      const vpc = new Vpc(stack, 'VPC');
+      const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
+
+      // WHEN
+      new NetworkMultipleTargetGroupsFargateService(stack, 'Service', {
+        cluster,
+        taskImageOptions: {
+          image: ContainerImage.fromRegistry('test'),
+          containerPorts: [70, 90],
+        },
+      });
+
+      // THEN
+      Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
+        LaunchType: 'FARGATE',
+        LoadBalancers: [
+          {
+            ContainerName: 'web',
+            ContainerPort: 70,
+            TargetGroupArn: {
+              Ref: 'ServiceLBPublicListenerweb70GroupA4184E9F',
+            },
+          },
+          {
+            ContainerName: 'web',
+            ContainerPort: 90,
+            TargetGroupArn: {
+              Ref: 'ServiceLBPublicListenerweb90GroupA4E78889',
+            },
+          },
+        ],
+      });
+    });
+
+    test('errors when targetGroups is empty', () => {
+      // GIVEN
+      const stack = new Stack();
+      const vpc = new Vpc(stack, 'VPC');
+      const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
+
+      // THEN
+      expect(() => {
+        new NetworkMultipleTargetGroupsFargateService(stack, 'Service', {
+          cluster,
+          taskImageOptions: {
+            image: ContainerImage.fromRegistry('test'),
+          },
+          targetGroups: [],
+        });
+      }).toThrow(/At least one target group should be specified/);
+    });
+
     test('construct with custom port', () => {
       // GIVEN
       const stack = new Stack();
       const vpc = new Vpc(stack, 'VPC');
       const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
 
-      new NetworkMultipleTargetGroupsFargateService(stack, 'Service', {
-        cluster,
-        taskImageOptions: {
-          image: ecs.ContainerImage.fromRegistry('test'),
-        },
-      });
-
       new NetworkMultipleTargetGroupsFargateService(stack, 'NLBService', {
-        cluster: cluster,
+        cluster,
         memoryLimitMiB: 1024,
         cpu: 512,
         taskImageOptions: {
           image: ContainerImage.fromRegistry('amazon/amazon-ecs-sample'),
+          containerPorts: [81],
         },
         loadBalancers: [
           {
@@ -1189,29 +1373,6 @@ describe('Network Load Balancer', () => {
           Ref: 'VPCB9E5F0B4',
         },
       });
-    });
-
-    test('construct errors when container port range is set for essential container', () => {
-      // GIVEN
-      const stack = new Stack();
-      const vpc = new Vpc(stack, 'VPC');
-      const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-      const taskDefinition = new ecs.FargateTaskDefinition(stack, 'FargateTaskDef');
-
-      taskDefinition.addContainer('MainContainer', {
-        image: ecs.ContainerImage.fromRegistry('test'),
-        portMappings: [{
-          containerPort: ContainerDefinition.CONTAINER_PORT_USE_RANGE,
-          containerPortRange: '8080-8081',
-        }],
-      });
-      // THEN
-      expect(() => {
-        new NetworkMultipleTargetGroupsFargateService(stack, 'Service', {
-          cluster,
-          taskDefinition,
-        });
-      }).toThrow('The first port mapping added to the default container must expose a single port');
     });
   });
 });

@@ -494,7 +494,7 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends Constru
     throw new Error(`Listener ${name} is not defined. Did you define listener with name ${name}?`);
   }
 
-  protected registerECSTargets(service: BaseService, container: ContainerDefinition, targets: ApplicationTargetProps[]): ApplicationTargetGroup {
+  protected registerECSTargets(service: BaseService, container: ContainerDefinition, targets: ApplicationTargetProps[]) {
     for (const targetProps of targets) {
       const conditions: Array<ListenerCondition> = [];
       if (targetProps.hostHeader) {
@@ -504,33 +504,24 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends Constru
         conditions.push(ListenerCondition.pathPatterns([targetProps.pathPattern]));
       }
 
-      const targetGroup = this.findListener(targetProps.listener).addTargets(`ECSTargetGroup${container.containerName}${targetProps.containerPort}`, {
-        port: 80,
-        targets: [
-          service.loadBalancerTarget({
-            containerName: container.containerName,
-            containerPort: targetProps.containerPort,
-            protocol: targetProps.protocol,
-          }),
-        ],
-        conditions,
-        priority: targetProps.priority,
-      });
-      this.targetGroups.push(targetGroup);
-    }
-    if (this.targetGroups.length === 0) {
-      throw new Error('At least one target group should be specified.');
-    }
-    return this.targetGroups[0];
-  }
-
-  protected addPortMappingForTargets(container: ContainerDefinition, targets: ApplicationTargetProps[]) {
-    for (const target of targets) {
-      if (!container.findPortMapping(target.containerPort, target.protocol || Protocol.TCP)) {
-        container.addPortMappings({
-          containerPort: target.containerPort,
-          protocol: target.protocol,
+      try {
+        const targetGroup = this.findListener(targetProps.listener).addTargets(`ECSTargetGroup${container.containerName}${targetProps.containerPort}`, {
+          port: 80,
+          targets: [
+            service.loadBalancerTarget({
+              containerName: container.containerName,
+              containerPort: targetProps.containerPort,
+              protocol: targetProps.protocol,
+            }),
+          ],
+          conditions,
+          priority: targetProps.priority,
         });
+        this.targetGroups.push(targetGroup);
+      } catch (error) {
+        if (error instanceof Error && !error.message.includes('has no mapping for port')) {
+          throw error;
+        }
       }
     }
   }

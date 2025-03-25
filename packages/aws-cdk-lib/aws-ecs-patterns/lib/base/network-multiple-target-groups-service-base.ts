@@ -383,31 +383,23 @@ export abstract class NetworkMultipleTargetGroupsServiceBase extends Construct {
     throw new Error(`Listener ${name} is not defined. Did you define listener with name ${name}?`);
   }
 
-  protected registerECSTargets(service: BaseService, container: ContainerDefinition, targets: NetworkTargetProps[]): NetworkTargetGroup {
+  protected registerECSTargets(service: BaseService, container: ContainerDefinition, targets: NetworkTargetProps[]) {
     for (const targetProps of targets) {
-      const targetGroup = this.findListener(targetProps.listener).addTargets(`ECSTargetGroup${container.containerName}${targetProps.containerPort}`, {
-        port: targetProps.containerPort ?? 80,
-        targets: [
-          service.loadBalancerTarget({
-            containerName: container.containerName,
-            containerPort: targetProps.containerPort,
-          }),
-        ],
-      });
-      this.targetGroups.push(targetGroup);
-    }
-    if (this.targetGroups.length === 0) {
-      throw new Error('At least one target group should be specified.');
-    }
-    return this.targetGroups[0];
-  }
-
-  protected addPortMappingForTargets(container: ContainerDefinition, targets: NetworkTargetProps[]) {
-    for (const target of targets) {
-      if (!container.findPortMapping(target.containerPort, Protocol.TCP)) {
-        container.addPortMappings({
-          containerPort: target.containerPort,
+      try {
+        const targetGroup = this.findListener(targetProps.listener).addTargets(`ECSTargetGroup${container.containerName}${targetProps.containerPort}`, {
+          port: targetProps.containerPort ?? 80,
+          targets: [
+            service.loadBalancerTarget({
+              containerName: container.containerName,
+              containerPort: targetProps.containerPort,
+            }),
+          ],
         });
+        this.targetGroups.push(targetGroup);
+      } catch (error) {
+        if (error instanceof Error && !error.message.includes('has no mapping for port')) {
+          throw error;
+        }
       }
     }
   }

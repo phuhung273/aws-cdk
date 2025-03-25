@@ -1,6 +1,5 @@
 import { Construct } from 'constructs';
-import { Ec2Service, Ec2TaskDefinition, PlacementConstraint, PlacementStrategy } from '../../../aws-ecs';
-import { NetworkTargetGroup } from '../../../aws-elasticloadbalancingv2';
+import { ContainerDefinition, Ec2Service, Ec2TaskDefinition, PlacementConstraint, PlacementStrategy } from '../../../aws-ecs';
 import { FeatureFlags } from '../../../core';
 import * as cxapi from '../../../cx-api';
 import {
@@ -88,11 +87,6 @@ export class NetworkMultipleTargetGroupsEc2Service extends NetworkMultipleTarget
    * The EC2 Task Definition in this construct.
    */
   public readonly taskDefinition: Ec2TaskDefinition;
-  /**
-   * The default target group for the service.
-   * @deprecated - Use `targetGroups` instead.
-   */
-  public readonly targetGroup: NetworkTargetGroup;
 
   /**
    * Constructs a new instance of the NetworkMultipleTargetGroupsEc2Service class.
@@ -144,19 +138,26 @@ export class NetworkMultipleTargetGroupsEc2Service extends NetworkMultipleTarget
 
     this.service = this.createEc2Service(props);
     if (props.targetGroups) {
-      this.addPortMappingForTargets(this.taskDefinition.defaultContainer, props.targetGroups);
-      this.targetGroup = this.registerECSTargets(this.service, this.taskDefinition.defaultContainer, props.targetGroups);
-    } else {
-      const containerPort = this.taskDefinition.defaultContainer.portMappings[0].containerPort;
-
-      if (!containerPort) {
-        throw new Error('The first port mapping added to the default container must expose a single port');
+      for (const container of this.taskDefinition.containers) {
+        this.registerECSTargets(this.service, container, props.targetGroups);
       }
+    } else {
+      for (const container of this.taskDefinition.containers) {
+        for (const portMapping of container.portMappings) {
+          if (portMapping.containerPort == ContainerDefinition.CONTAINER_PORT_USE_RANGE) {
+            continue;
+          }
 
-      this.targetGroup = this.listener.addTargets('ECS', {
-        targets: [this.service],
-        port: containerPort,
-      });
+          this.targetGroups.push(this.listener.addTargets(`${container.containerName}${portMapping.containerPort}`, {
+            targets: [this.service],
+            port: portMapping.containerPort,
+          }));
+        }
+      }
+    }
+
+    if (this.targetGroups.length === 0) {
+      throw new Error('At least one target group should be specified.');
     }
   }
 
