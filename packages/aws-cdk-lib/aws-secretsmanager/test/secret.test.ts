@@ -1285,6 +1285,52 @@ test('fails if secret policy has no IAM principals', () => {
   expect(() => app.synth()).toThrow(/A PolicyStatement used in a resource-based policy must specify at least one IAM principal/);
 });
 
+test('can blockPublicPolicy', () => {
+  // GIVEN
+  const secret = new secretsmanager.Secret(stack, 'Secret', {
+    blockPublicPolicy: true,
+  });
+
+  // WHEN
+  secret.addToResourcePolicy(new iam.PolicyStatement({
+    actions: ['secretsmanager:GetSecretValue'],
+    resources: ['*'],
+    principals: [new iam.AccountRootPrincipal()],
+  }));
+
+  // THEN
+  Template.fromStack(stack).hasResourceProperties('AWS::SecretsManager::ResourcePolicy', {
+    ResourcePolicy: {
+      Statement: [
+        {
+          Action: 'secretsmanager:GetSecretValue',
+          Effect: 'Allow',
+          Principal: {
+            'AWS': {
+              'Fn::Join': [
+                '',
+                [
+                  "arn:",
+                  { "Ref": "AWS::Partition" },
+                  ":iam::",
+                  { "Ref": "AWS::AccountId" },
+                  ":root"
+                ],
+              ],
+            },
+          },
+          Resource: '*',
+        },
+      ],
+      Version: '2012-10-17',
+    },
+    SecretId: {
+      Ref: 'SecretA720EF05',
+    },
+    BlockPublicPolicy: true,
+  });
+});
+
 test('with replication regions', () => {
   // WHEN
   const secret = new secretsmanager.Secret(stack, 'Secret', {

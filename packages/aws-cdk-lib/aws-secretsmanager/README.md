@@ -93,6 +93,24 @@ const secret = new secretsmanager.Secret(this, 'Secret', { encryptionKey: key })
 secret.grantRead(otherAccount);
 ```
 
+You can use `blockPublicPolicy` to block policies that allow broad access,
+for example those that use a wildcard for the principal:
+
+```ts
+import * as iam from 'aws-cdk-lib/aws-iam';
+
+const secret = new secretsmanager.Secret(this, 'Secret', {
+  blockPublicPolicy: true,
+});
+
+// Below action will fail
+secret.addToResourcePolicy(new iam.PolicyStatement({
+  actions: ['secretsmanager:GetSecretValue'],
+  resources: ['*'],
+  principals: [new iam.StarPrincipal()],
+}));
+```
+
 ## Rotating a Secret
 
 ### Using a Custom Lambda Function

@@ -213,6 +213,14 @@ export interface SecretProps {
    * @default - Secret is not replicated
    */
   readonly replicaRegions?: ReplicaRegion[];
+
+  /**
+   * Specifies whether to block resource-based policies that allow broad access to the secret.
+   * 
+   * @see https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_resource-policies.html
+   * @default - no block
+   */
+  readonly blockPublicPolicy?: boolean;
 }
 
 /**
@@ -339,6 +347,8 @@ abstract class SecretBase extends Resource implements ISecret {
 
   protected abstract readonly autoCreatePolicy: boolean;
 
+  protected blockPublicPolicy?: boolean;
+
   private policy?: ResourcePolicy;
   private _arnForPolicies: string;
 
@@ -437,7 +447,10 @@ abstract class SecretBase extends Resource implements ISecret {
 
   public addToResourcePolicy(statement: iam.PolicyStatement): iam.AddToResourcePolicyResult {
     if (!this.policy && this.autoCreatePolicy) {
-      this.policy = new ResourcePolicy(this, 'Policy', { secret: this });
+      this.policy = new ResourcePolicy(this, 'Policy', {
+        secret: this,
+        blockPublicPolicy: this.blockPublicPolicy,
+      });
     }
 
     if (this.policy) {
@@ -625,6 +638,8 @@ export class Secret extends SecretBase {
     });
     // Enhanced CDK Analytics Telemetry
     addConstructMetadata(this, props);
+
+    this.blockPublicPolicy = props.blockPublicPolicy;
 
     if (props.generateSecretString &&
         (props.generateSecretString.secretStringTemplate || props.generateSecretString.generateStringKey) &&

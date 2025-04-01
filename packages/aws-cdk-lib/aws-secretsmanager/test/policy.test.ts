@@ -41,3 +41,21 @@ describe.each([
     Template.fromStack(stack).resourceCountIs('AWS::SecretsManager::ResourcePolicy', expectedResourcePolicyCount);
   });
 });
+
+test('using addToResourcePolicy on a Secret that blockPublicPolicy', () => {
+  // GIVEN
+  const app = new cdk.App();
+  const stack = new cdk.Stack(app);
+  const secret = new secretsmanager.Secret(stack, 'Secret', {
+    blockPublicPolicy: true,
+  });
+  const servicePrincipalOne = new iam.ServicePrincipal('some-service-a');
+
+  // WHEN
+  secret.grantRead(servicePrincipalOne);
+
+  // THEN
+  Template.fromStack(stack).hasResourceProperties('AWS::SecretsManager::ResourcePolicy', {
+    BlockPublicPolicy: true,
+  });
+});
