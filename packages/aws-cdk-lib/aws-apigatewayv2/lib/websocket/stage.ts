@@ -94,6 +94,7 @@ export class WebSocketStage extends StageBase implements IWebSocketStage {
     new CfnStage(this, 'Resource', {
       apiId: props.webSocketApi.apiId,
       stageName: this.physicalName,
+      accessLogSettings: this._validateAccessLogSettings(props.accessLogSettings),
       autoDeploy: props.autoDeploy,
       defaultRouteSettings: props.throttle || props.detailedMetricsEnabled ? {
         throttlingBurstLimit: props.throttle?.burstLimit,
