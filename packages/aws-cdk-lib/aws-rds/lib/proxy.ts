@@ -3,7 +3,7 @@ import { IDatabaseCluster } from './cluster-ref';
 import { IEngine } from './engine';
 import { IDatabaseInstance } from './instance';
 import { engineDescription } from './private/util';
-import { CfnDBProxy, CfnDBProxyTargetGroup, CfnDBInstance } from './rds.generated';
+import { CfnDBProxy, CfnDBProxyTargetGroup, CfnDBInstance, CfnDBProxyEndpoint } from './rds.generated';
 import * as ec2 from '../../aws-ec2';
 import * as iam from '../../aws-iam';
 import * as secretsmanager from '../../aws-secretsmanager';
@@ -528,6 +528,13 @@ export class DatabaseProxy extends DatabaseProxyBase
       dbInstanceIdentifiers,
       dbClusterIdentifiers,
       connectionPoolConfigurationInfo: toConnectionPoolConfigurationInfo(props),
+    });
+
+    new CfnDBProxyEndpoint(this, 'ProxyReaderEndpoint', {
+      dbProxyName: this.dbProxyName,
+      dbProxyEndpointName: `${physicalName}-reader-endpoint`,
+      vpcSubnetIds: props.vpc.selectSubnets(props.vpcSubnets).subnetIds,
+      targetRole: 'READ_ONLY',
     });
 
     // When a `DatabaseProxy` is created by `DatabaseCluster.addProxy`,
