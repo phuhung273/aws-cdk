@@ -1,233 +1,11 @@
-import { Construct } from 'constructs';
-import { Connections } from './connections';
-import { CfnSecurityGroup, CfnSecurityGroupEgress, CfnSecurityGroupIngress } from './ec2.generated';
-import { IPeer, Peer } from './peer';
-import { Port } from './port';
-import { IVpc } from './vpc';
-import * as cxschema from '../../cloud-assembly-schema';
-import { Annotations, ContextProvider, IResource, Lazy, Names, Resource, ResourceProps, Stack, Token, ValidationError } from '../../core';
-import { addConstructMetadata, MethodMetadata } from '../../core/lib/metadata-resource';
-import { propertyInjectable } from '../../core/lib/prop-injectable';
-import * as cxapi from '../../cx-api';
-
-export const SECURITY_GROUP_SYMBOL = Symbol.for('@aws-cdk/iam.SecurityGroup');
-
-export const SECURITY_GROUP_DISABLE_INLINE_RULES_CONTEXT_KEY = '@aws-cdk/aws-ec2.securityGroupDisableInlineRules';
-
-/**
- * Interface for security group-like objects
- */
-export interface ISecurityGroup extends IResource, IPeer {
-  /**
-   * ID for the current security group
-   * @attribute
-   */
-  readonly securityGroupId: string;
-
-  /**
-   * Whether the SecurityGroup has been configured to allow all outbound traffic
-   */
-  readonly allowAllOutbound: boolean;
-
-  /**
-   * Add an ingress rule for the current security group
-   *
-   * `remoteRule` controls where the Rule object is created if the peer is also a
-   * securityGroup and they are in different stack. If false (default) the
-   * rule object is created under the current SecurityGroup object. If true and the
-   * peer is also a SecurityGroup, the rule object is created under the remote
-   * SecurityGroup object.
-   */
-  addIngressRule(peer: IPeer, connection: Port, description?: string, remoteRule?: boolean): void;
-
-  /**
-   * Add an egress rule for the current security group
-   *
-   * `remoteRule` controls where the Rule object is created if the peer is also a
-   * securityGroup and they are in different stack. If false (default) the
-   * rule object is created under the current SecurityGroup object. If true and the
-   * peer is also a SecurityGroup, the rule object is created under the remote
-   * SecurityGroup object.
-   */
-  addEgressRule(peer: IPeer, connection: Port, description?: string, remoteRule?: boolean): void;
-}
-
-/**
- * A SecurityGroup that is not created in this template
- */
-export abstract class SecurityGroupBase extends Resource implements ISecurityGroup {
-  /**
-   * Return whether the indicated object is a security group
-   */
-  public static isSecurityGroup(x: any): x is SecurityGroupBase {
-    return SECURITY_GROUP_SYMBOL in x;
-  }
-
-  public abstract readonly securityGroupId: string;
-  public abstract readonly allowAllOutbound: boolean;
-
-  /**
-   * Whether the SecurityGroup has been configured to allow all outbound ipv6 traffic
-   */
-  public abstract readonly allowAllIpv6Outbound: boolean;
-
-  public readonly canInlineRule = false;
-  public readonly connections: Connections = new Connections({ securityGroups: [this] });
-
-  /**
-   * SecurityGroup default port
-   */
-  public readonly defaultPort?: Port;
-
-  private peerAsTokenCount: number = 0;
-
-  constructor(scope: Construct, id: string, props?: ResourceProps) {
-    super(scope, id, props);
-
-    Object.defineProperty(this, SECURITY_GROUP_SYMBOL, { value: true });
-  }
-
-  public get uniqueId() {
-    return Names.nodeUniqueId(this.node);
-  }
-
-  public addIngressRule(peer: IPeer, connection: Port, description?: string, remoteRule?: boolean) {
-    if (description === undefined) {
-      description = `from ${peer.uniqueId}:${connection}`;
-    }
-
-    const { scope, id } = this.determineRuleScope(peer, connection, 'from', remoteRule);
-
-    // Skip duplicates
-    if (scope.node.tryFindChild(id) === undefined) {
-      new CfnSecurityGroupIngress(scope, id, {
-        groupId: this.securityGroupId,
-        ...peer.toIngressRuleConfig(),
-        ...connection.toRuleJson(),
-        description,
-      });
-    }
-  }
-
-  public addEgressRule(peer: IPeer, connection: Port, description?: string, remoteRule?: boolean) {
-    if (description === undefined) {
-      description = `to ${peer.uniqueId}:${connection}`;
-    }
-
-    const { scope, id } = this.determineRuleScope(peer, connection, 'to', remoteRule);
-
-    // Skip duplicates
-    if (scope.node.tryFindChild(id) === undefined) {
-      new CfnSecurityGroupEgress(scope, id, {
-        groupId: this.securityGroupId,
-        ...peer.toEgressRuleConfig(),
-        ...connection.toRuleJson(),
-        description,
-      });
-    }
-  }
-
-  public toIngressRuleConfig(): any {
-    return { sourceSecurityGroupId: this.securityGroupId };
-  }
-
-  public toEgressRuleConfig(): any {
-    return { destinationSecurityGroupId: this.securityGroupId };
-  }
-
-  /**
-   * Determine where to parent a new ingress/egress rule
-   *
-   * A SecurityGroup rule is parented under the group it's related to, UNLESS
-   * we're in a cross-stack scenario with another Security Group. In that case,
-   * we respect the 'remoteRule' flag and will parent under the other security
-   * group.
-   *
-   * This is necessary to avoid cyclic dependencies between stacks, since both
-   * ingress and egress rules will reference both security groups, and a naive
-   * parenting will lead to the following situation:
-   *
-   *   ╔════════════════════╗         ╔════════════════════╗
-   *   ║  ┌───────────┐     ║         ║    ┌───────────┐   ║
-   *   ║  │  GroupA   │◀────╬─┐   ┌───╬───▶│  GroupB   │   ║
-   *   ║  └───────────┘     ║ │   │   ║    └───────────┘   ║
-   *   ║        ▲           ║ │   │   ║          ▲         ║
-   *   ║        │           ║ │   │   ║          │         ║
-   *   ║        │           ║ │   │   ║          │         ║
-   *   ║  ┌───────────┐     ║ └───┼───╬────┌───────────┐   ║
-   *   ║  │  EgressA  │─────╬─────┘   ║    │ IngressB  │   ║
-   *   ║  └───────────┘     ║         ║    └───────────┘   ║
-   *   ║                    ║         ║                    ║
-   *   ╚════════════════════╝         ╚════════════════════╝
-   *
-   * By having the ability to switch the parent, we avoid the cyclic reference by
-   * keeping all rules in a single stack.
-   *
-   * If this happens, we also have to change the construct ID, because
-   * otherwise we might have two objects with the same ID if we have
-   * multiple reversed security group relationships.
-   *
-   *   ╔═══════════════════════════════════╗
-   *   ║┌───────────┐                      ║
-   *   ║│  GroupB   │                      ║
-   *   ║└───────────┘                      ║
-   *   ║      ▲                            ║
-   *   ║      │              ┌───────────┐ ║
-   *   ║      ├────"from A"──│ IngressB  │ ║
-   *   ║      │              └───────────┘ ║
-   *   ║      │              ┌───────────┐ ║
-   *   ║      ├─────"to B"───│  EgressA  │ ║
-   *   ║      │              └───────────┘ ║
-   *   ║      │              ┌───────────┐ ║
-   *   ║      └─────"to B"───│  EgressC  │ ║  <-- oops
-   *   ║                     └───────────┘ ║
-   *   ╚═══════════════════════════════════╝
-   */
-
-  protected determineRuleScope(
-    peer: IPeer,
-    connection: Port,
-    fromTo: 'from' | 'to',
-    remoteRule?: boolean): RuleScope {
-    if (remoteRule && SecurityGroupBase.isSecurityGroup(peer) && differentStacks(this, peer)) {
-      // Reversed
-      const reversedFromTo = fromTo === 'from' ? 'to' : 'from';
-      return { scope: peer, id: `${this.uniqueId}:${connection} ${reversedFromTo}` };
-    } else {
-      // Regular (do old ID escaping to in order to not disturb existing deployments)
-      return { scope: this, id: `${fromTo} ${this.renderPeer(peer)}:${connection}`.replace('/', '_') };
-    }
-  }
-
-  private renderPeer(peer: IPeer) {
-    if (Token.isUnresolved(peer.uniqueId)) {
-      // Need to return a unique value each time a peer
-      // is an unresolved token, else the duplicate skipper
-      // in `sg.addXxxRule` can detect unique rules as duplicates
-      return this.peerAsTokenCount++ ? `'{IndirectPeer${this.peerAsTokenCount}}'` : '{IndirectPeer}';
-    } else {
-      return peer.uniqueId;
-    }
-  }
-}
-
-/**
- * The scope and id in which a given SecurityGroup rule should be defined.
- */
-export interface RuleScope {
-  /**
-   * The SecurityGroup in which a rule should be scoped.
-   */
-  readonly scope: ISecurityGroup;
-  /**
-   * The construct ID to use for the rule.
-   */
-  readonly id: string;
-}
-
-function differentStacks(group1: SecurityGroupBase, group2: SecurityGroupBase) {
-  return Stack.of(group1) !== Stack.of(group2);
-}
+import { ALL_TRAFFIC_PEER, ALL_TRAFFIC_PORT, ALLOW_ALL_RULE, CfnSecurityGroup, egressRulesEqual, ingressRulesEqual, IPeer, isAllTrafficRule, ISecurityGroup, MATCH_NO_TRAFFIC, NO_TRAFFIC_PEER, NO_TRAFFIC_PORT, Peer, Port, SECURITY_GROUP_DISABLE_INLINE_RULES_CONTEXT_KEY, SecurityGroupBase, SecurityGroupImportOptions } from "aws-cdk-lib/aws-ec2";
+import { propertyInjectable } from "aws-cdk-lib/core/lib/prop-injectable";
+import * as cxschema from 'aws-cdk-lib/cloud-assembly-schema';
+import * as cxapi from 'aws-cdk-lib/cx-api';
+import { Construct } from "constructs";
+import { IVpcV2 } from "./vpc-v2-base";
+import { Annotations, ContextProvider, Lazy, Token, ValidationError } from "aws-cdk-lib";
+import { addConstructMetadata, MethodMetadata } from "aws-cdk-lib/core/lib/metadata-resource";
 
 export interface SecurityGroupProps {
   /**
@@ -252,7 +30,7 @@ export interface SecurityGroupProps {
   /**
    * The VPC in which to create the security group.
    */
-  readonly vpc: IVpc;
+  readonly vpc: IVpcV2;
 
   /**
    * Whether to allow all outbound traffic by default.
@@ -295,45 +73,6 @@ export interface SecurityGroupProps {
    * @default false
    */
   readonly disableInlineRules?: boolean;
-}
-
-/**
- * Additional options for imported security groups
- */
-export interface SecurityGroupImportOptions {
-  /**
-   * Mark the SecurityGroup as having been created allowing all outbound traffic
-   *
-   * Only if this is set to false will egress rules be added to this security
-   * group. Be aware, this would undo any potential "all outbound traffic"
-   * default.
-   *
-   *
-   * @default true
-   */
-  readonly allowAllOutbound?: boolean;
-
-  /**
-   * Mark the SecurityGroup as having been created allowing all outbound ipv6 traffic
-   *
-   * Only if this is set to false will egress rules for ipv6 be added to this security
-   * group. Be aware, this would undo any potential "all outbound traffic"
-   * default.
-   *
-   * @default false
-   */
-  readonly allowAllIpv6Outbound?: boolean;
-
-  /**
-   * If a SecurityGroup is mutable CDK can add rules to existing groups
-   *
-   * Beware that making a SecurityGroup immutable might lead to issue
-   * due to missing ingress/egress rules for new resources.
-   *
-   *
-   * @default true
-   */
-  readonly mutable?: boolean;
 }
 
 /**
@@ -398,7 +137,7 @@ export class SecurityGroup extends SecurityGroupBase {
   /**
    * Look up a security group by name.
    */
-  public static fromLookupByName(scope: Construct, id: string, securityGroupName: string, vpc: IVpc) {
+  public static fromLookupByName(scope: Construct, id: string, securityGroupName: string, vpc: IVpcV2) {
     return this.fromLookupAttributes(scope, id, { securityGroupName, vpc });
   }
 
@@ -724,113 +463,6 @@ export class SecurityGroup extends SecurityGroupBase {
 }
 
 /**
- * Egress rule that purposely matches no traffic
- *
- * This is used in order to disable the "all traffic" default of Security Groups.
- *
- * No machine can ever actually have the 255.255.255.255 IP address, but
- * in order to lock it down even more we'll restrict to a nonexistent
- * ICMP traffic type.
- */
-export const MATCH_NO_TRAFFIC = {
-  cidrIp: '255.255.255.255/32',
-  description: 'Disallow all traffic',
-  ipProtocol: 'icmp',
-  fromPort: 252,
-  toPort: 86,
-};
-
-export const NO_TRAFFIC_PEER = Peer.ipv4(MATCH_NO_TRAFFIC.cidrIp);
-export const NO_TRAFFIC_PORT = Port.icmpTypeAndCode(MATCH_NO_TRAFFIC.fromPort, MATCH_NO_TRAFFIC.toPort);
-
-/**
- * Egress rule that matches all traffic
- */
-export const ALLOW_ALL_RULE = {
-  cidrIp: '0.0.0.0/0',
-  description: 'Allow all outbound traffic by default',
-  ipProtocol: '-1',
-};
-
-export const ALL_TRAFFIC_PEER = Peer.anyIpv4();
-export const ALL_TRAFFIC_PORT = Port.allTraffic();
-
-export interface ConnectionRule {
-  /**
-   * The IP protocol name (tcp, udp, icmp) or number (see Protocol Numbers).
-   * Use -1 to specify all protocols. If you specify -1, or a protocol number
-   * other than tcp, udp, icmp, or 58 (ICMPv6), traffic on all ports is
-   * allowed, regardless of any ports you specify. For tcp, udp, and icmp, you
-   * must specify a port range. For protocol 58 (ICMPv6), you can optionally
-   * specify a port range; if you don't, traffic for all types and codes is
-   * allowed.
-   *
-   * @default tcp
-   */
-  readonly protocol?: string;
-
-  /**
-   * Start of port range for the TCP and UDP protocols, or an ICMP type number.
-   *
-   * If you specify icmp for the IpProtocol property, you can specify
-   * -1 as a wildcard (i.e., any ICMP type number).
-   */
-  readonly fromPort: number;
-
-  /**
-   * End of port range for the TCP and UDP protocols, or an ICMP code.
-   *
-   * If you specify icmp for the IpProtocol property, you can specify -1 as a
-   * wildcard (i.e., any ICMP code).
-   *
-   * @default If toPort is not specified, it will be the same as fromPort.
-   */
-  readonly toPort?: number;
-
-  /**
-   * Description of this connection. It is applied to both the ingress rule
-   * and the egress rule.
-   *
-   * @default No description
-   */
-  readonly description?: string;
-}
-
-/**
- * Compare two ingress rules for equality the same way CloudFormation would (discarding description)
- */
-export function ingressRulesEqual(a: CfnSecurityGroup.IngressProperty, b: CfnSecurityGroup.IngressProperty) {
-  return a.cidrIp === b.cidrIp
-    && a.cidrIpv6 === b.cidrIpv6
-    && a.fromPort === b.fromPort
-    && a.toPort === b.toPort
-    && a.ipProtocol === b.ipProtocol
-    && a.sourceSecurityGroupId === b.sourceSecurityGroupId
-    && a.sourceSecurityGroupName === b.sourceSecurityGroupName
-    && a.sourceSecurityGroupOwnerId === b.sourceSecurityGroupOwnerId;
-}
-
-/**
- * Compare two egress rules for equality the same way CloudFormation would (discarding description)
- */
-export function egressRulesEqual(a: CfnSecurityGroup.EgressProperty, b: CfnSecurityGroup.EgressProperty) {
-  return a.cidrIp === b.cidrIp
-    && a.cidrIpv6 === b.cidrIpv6
-    && a.fromPort === b.fromPort
-    && a.toPort === b.toPort
-    && a.ipProtocol === b.ipProtocol
-    && a.destinationPrefixListId === b.destinationPrefixListId
-    && a.destinationSecurityGroupId === b.destinationSecurityGroupId;
-}
-
-/**
- * Whether this rule refers to all traffic
- */
-export function isAllTrafficRule(rule: any) {
-  return (rule.cidrIp === '0.0.0.0/0' || rule.cidrIpv6 === '::/0') && rule.ipProtocol === '-1';
-}
-
-/**
  * Properties for looking up an existing SecurityGroup.
  *
  * Either `securityGroupName` or `securityGroupId` has to be specified.
@@ -861,5 +493,5 @@ interface SecurityGroupLookupOptions {
    *
    * @default Don't filter on VPC
    */
-  readonly vpc?: IVpc;
+  readonly vpc?: IVpcV2;
 }

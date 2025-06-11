@@ -13,8 +13,9 @@ import { IntegTest } from '@aws-cdk/integ-tests-alpha';
 import * as cdk from 'aws-cdk-lib';
 import { IpCidr, SubnetV2 } from '../lib/subnet-v2';
 import { EgressOnlyInternetGateway, InternetGateway, NatConnectivityType, NatGateway, RouteTable, VPNGatewayV2 } from '../lib/route';
-import { GatewayVpcEndpoint, GatewayVpcEndpointAwsService, SubnetType, VpnConnectionType } from 'aws-cdk-lib/aws-ec2';
+import { GatewayVpcEndpointAwsService, SubnetType, VpnConnectionType } from 'aws-cdk-lib/aws-ec2';
 import { Fn } from 'aws-cdk-lib';
+import { GatewayVpcEndpoint } from '../lib';
 
 const app = new cdk.App();
 

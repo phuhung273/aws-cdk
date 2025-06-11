@@ -3,9 +3,14 @@
 // In general, all files including L2 classes will be listed here,
 // while all files including only utility functions will be omitted from here.
 
+export * from './client-vpn-endpoint';
 export * from './vpc-v2';
 export * from './ipam';
+export * from './network-acl';
 export * from './vpc-v2-base';
+export * from './vpc-endpoints';
+export * from './vpn';
+export * from './security-group';
 export * from './subnet-v2';
 export * from './route';
 export * from './transit-gateway';

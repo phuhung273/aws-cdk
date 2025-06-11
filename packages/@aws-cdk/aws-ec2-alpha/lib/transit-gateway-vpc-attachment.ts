@@ -1,5 +1,5 @@
 import { ITransitGateway } from './transit-gateway';
-import { CfnTransitGatewayAttachment, ISubnet, IVpc } from 'aws-cdk-lib/aws-ec2';
+import { CfnTransitGatewayAttachment } from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 import { TransitGatewayRouteTableAssociation } from './transit-gateway-route-table-association';
 import { TransitGatewayRouteTablePropagation } from './transit-gateway-route-table-propagation';
@@ -9,6 +9,8 @@ import { ITransitGatewayRouteTable } from './transit-gateway-route-table';
 import { Annotations } from 'aws-cdk-lib';
 import { addConstructMetadata } from 'aws-cdk-lib/core/lib/metadata-resource';
 import { propertyInjectable } from 'aws-cdk-lib/core/lib/prop-injectable';
+import { ISubnetV2 } from './subnet-v2';
+import { IVpcV2 } from './vpc-v2-base';
 
 /**
  * Options for Transit Gateway VPC Attachment.
@@ -50,12 +52,12 @@ export interface ITransitGatewayVpcAttachment extends ITransitGatewayAttachment 
   /**
    * Add additional subnets to this attachment.
    */
-  addSubnets(subnets: ISubnet[]): void;
+  addSubnets(subnets: ISubnetV2[]): void;
 
   /**
    * Remove subnets from this attachment.
    */
-  removeSubnets(subnets: ISubnet[]): void;
+  removeSubnets(subnets: ISubnetV2[]): void;
 }
 
 /**
@@ -66,12 +68,12 @@ interface BaseTransitGatewayVpcAttachmentProps {
    * A list of one or more subnets to place the attachment in.
    * It is recommended to specify more subnets for better availability.
    */
-  readonly subnets: ISubnet[];
+  readonly subnets: ISubnetV2[];
 
   /**
    * A VPC attachment(s) will get assigned to.
    */
-  readonly vpc: IVpc;
+  readonly vpc: IVpcV2;
 
   /**
    * The VPC attachment options.
@@ -127,7 +129,7 @@ export class TransitGatewayVpcAttachment extends TransitGatewayAttachmentBase im
   /** Uniquely identifies this class. */
   public static readonly PROPERTY_INJECTION_ID: string = '@aws-cdk.aws-ec2-alpha.TransitGatewayVpcAttachment';
   public readonly transitGatewayAttachmentId: string;
-  private readonly subnets: ISubnet[] = [];
+  private readonly subnets: ISubnetV2[] = [];
 
   /**
    * The AWS CloudFormation resource representing the Transit Gateway Attachment.
@@ -181,7 +183,7 @@ export class TransitGatewayVpcAttachment extends TransitGatewayAttachmentBase im
   /**
    * Add additional subnets to this attachment.
    */
-  addSubnets(subnets: ISubnet[]): void {
+  addSubnets(subnets: ISubnetV2[]): void {
     for (const subnet of subnets) {
       if (this.subnets.some(existing => existing.subnetId === subnet.subnetId)) {
         throw new Error(`Subnet with ID ${subnet.subnetId} is already added to the Attachment ${this.transitGatewayAttachmentId}.`);
@@ -194,7 +196,7 @@ export class TransitGatewayVpcAttachment extends TransitGatewayAttachmentBase im
   /**
    * Remove additional subnets to this attachment.
    */
-  removeSubnets(subnets: ISubnet[]): void {
+  removeSubnets(subnets: ISubnetV2[]): void {
     for (const subnet of subnets) {
       const index = this.subnets.findIndex(existing => existing.subnetId === subnet.subnetId);
       if (index === -1) {

@@ -1,6 +1,7 @@
 /* eslint no-bitwise: ["error", { "allow": ["~", "|", "<<", "&"] }] */
 
-import { ISubnet, SubnetType } from 'aws-cdk-lib/aws-ec2';
+import { SubnetType } from 'aws-cdk-lib/aws-ec2';
+import { ISubnetV2 } from './subnet-v2';
 
 /**
  * The default names for every subnet type
@@ -22,7 +23,7 @@ export function defaultSubnetName(type: SubnetType) {
  *
  * All subnet names look like NAME <> "Subnet" <> INDEX
  */
-export function subnetGroupNameFromConstructId(subnet: ISubnet) {
+export function subnetGroupNameFromConstructId(subnet: ISubnetV2) {
   return subnet.node.id.replace(/Subnet\d+$/, '');
 }
 
@@ -59,7 +60,7 @@ export function getFeatureStatus(status?: boolean): TransitGatewayFeatureStatus 
 /**
  * Return the union of table IDs from all selected subnets
  */
-export function allRouteTableIds(subnets: ISubnet[]): string[] {
+export function allRouteTableIds(subnets: ISubnetV2[]): string[] {
   const ret = new Set<string>();
   for (const subnet of subnets) {
     if (subnet.routeTable && subnet.routeTable.routeTableId) {

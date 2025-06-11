@@ -326,7 +326,7 @@ export class VpcV2 extends VpcV2Base {
       public readonly privateSubnets: ISubnetV2[] = [];
       public readonly isolatedSubnets: ISubnetV2[] = [];
       public readonly internetConnectivityEstablished: IDependable = new DependencyGroup();
-      public readonly ipv4CidrBlock: string;
+      public readonly ipv4CidrBlock?: string;
       public readonly region: string;
       public readonly ownerAccountId: string;
       public readonly vpcName?: string;
@@ -440,17 +440,17 @@ export class VpcV2 extends VpcV2Base {
   /**
    * Isolated Subnets that are part of this VPC.
    */
-  public readonly isolatedSubnets: ISubnet[];
+  public readonly isolatedSubnets: ISubnetV2[];
 
   /**
    * Public Subnets that are part of this VPC.
    */
-  public readonly publicSubnets: ISubnet[];
+  public readonly publicSubnets: ISubnetV2[];
 
   /**
    * Public Subnets that are part of this VPC.
    */
-  public readonly privateSubnets: ISubnet[];
+  public readonly privateSubnets: ISubnetV2[];
 
   /**
    * To define dependency on internet connectivity
@@ -494,7 +494,7 @@ export class VpcV2 extends VpcV2Base {
    */
   public readonly vpcName?: string;
 
-  public readonly ipv4CidrBlock: string = '';
+  public readonly ipv4CidrBlock?: string = '';
 
   constructor(scope: Construct, id: string, props: VpcV2Props = {}) {
     super(scope, id, {

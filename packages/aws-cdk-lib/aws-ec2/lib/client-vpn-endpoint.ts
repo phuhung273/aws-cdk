@@ -427,7 +427,7 @@ export class ClientVpnEndpoint extends Resource implements IClientVpnEndpoint {
   }
 }
 
-function renderAuthenticationOptions(
+export function renderAuthenticationOptions(
   clientCertificateArn?: string,
   userBasedAuthentication?: ClientVpnUserBasedAuthentication): CfnClientVpnEndpoint.ClientAuthenticationRequestProperty[] {
   const authenticationOptions: CfnClientVpnEndpoint.ClientAuthenticationRequestProperty[] = [];
@@ -451,7 +451,7 @@ function renderAuthenticationOptions(
   return authenticationOptions;
 }
 
-function booleanToEnabledDisabled(val?: boolean): 'enabled' | 'disabled' | undefined {
+export function booleanToEnabledDisabled(val?: boolean): 'enabled' | 'disabled' | undefined {
   switch (val) {
     case undefined:
       return undefined;

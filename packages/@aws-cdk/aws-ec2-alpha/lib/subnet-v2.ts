@@ -1,11 +1,12 @@
-import { Resource, Names, Lazy, Tags, Token, ValidationError, UnscopedValidationError } from 'aws-cdk-lib';
-import { CfnSubnet, CfnSubnetRouteTableAssociation, INetworkAcl, IRouteTable, ISubnet, NetworkAcl, SubnetNetworkAclAssociation, SubnetType } from 'aws-cdk-lib/aws-ec2';
+import { Resource, Names, Lazy, Tags, Token, ValidationError, UnscopedValidationError, IResource } from 'aws-cdk-lib';
+import { CfnSubnet, CfnSubnetRouteTableAssociation, INetworkAcl, IRouteTable, NetworkAcl, SubnetType } from 'aws-cdk-lib/aws-ec2';
 import { Construct, DependencyGroup, IDependable } from 'constructs';
 import { IVpcV2 } from './vpc-v2-base';
-import { CidrBlock, CidrBlockIpv6, defaultSubnetName } from './util';
+import { CidrBlock, CidrBlockIpv6, defaultSubnetName, NetworkUtils } from './util';
 import { RouteTable } from './route';
 import { addConstructMetadata, MethodMetadata } from 'aws-cdk-lib/core/lib/metadata-resource';
 import { propertyInjectable } from 'aws-cdk-lib/core/lib/prop-injectable';
+import { SubnetNetworkAclAssociation } from './network-acl';
 
 /**
  * Interface to define subnet CIDR
@@ -51,7 +52,7 @@ export interface SubnetV2Props {
    * ipv4 cidr to assign to this subnet.
    * See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet.html#cfn-ec2-subnet-cidrblock
    */
-  readonly ipv4CidrBlock: IpCidr;
+  readonly ipv4CidrBlock?: IpCidr;
 
   /**
    * Ipv6 CIDR Range for subnet
@@ -117,12 +118,17 @@ export interface SubnetV2Props {
 /**
  * Interface with additional properties for SubnetV2
  */
-export interface ISubnetV2 extends ISubnet {
+export interface ISubnetV2 extends IResource {
 
   /**
    * The IPv6 CIDR block for this subnet
    */
   readonly ipv6CidrBlock?: string;
+
+  /**
+   * The IPv4 CIDR block for this subnet
+   */
+  readonly ipv4CidrBlock?: string;
 
   /**
    * The type of subnet (public or private) that this subnet represents.
@@ -131,6 +137,33 @@ export interface ISubnetV2 extends ISubnet {
    */
   readonly subnetType?: SubnetType;
 
+  /**
+   * The Availability Zone the subnet is located in
+   */
+  readonly availabilityZone: string;
+
+  /**
+   * The subnetId for this particular subnet
+   * @attribute
+   */
+  readonly subnetId: string;
+
+  /**
+   * Dependable that can be depended upon to force internet connectivity established on the VPC
+   */
+  readonly internetConnectivityEstablished: IDependable;
+
+  /**
+   * The route table for this subnet
+   */
+  readonly routeTable: IRouteTable;
+
+  /**
+   * Associate a Network ACL with this subnet
+   *
+   * @param acl The Network ACL to associate
+   */
+  associateNetworkAcl(id: string, acl: INetworkAcl): void;
 }
 
 /**
@@ -187,7 +220,7 @@ export class SubnetV2 extends Resource implements ISubnetV2 {
       /**
        * The IPv4 CIDR block assigned to this subnet
        */
-      public readonly ipv4CidrBlock: string = attrs.ipv4CidrBlock;
+      public readonly ipv4CidrBlock?: string = attrs.ipv4CidrBlock;
 
       /**
        *  Current route table associated with this subnet
@@ -238,7 +271,7 @@ export class SubnetV2 extends Resource implements ISubnetV2 {
   /**
    * The IPv4 CIDR block for this subnet
    */
-  public readonly ipv4CidrBlock: string;
+  public readonly ipv4CidrBlock?: string;
 
   /**
    * The IPv6 CIDR Block for this subnet
@@ -270,17 +303,17 @@ export class SubnetV2 extends Resource implements ISubnetV2 {
     // Enhanced CDK Analytics Telemetry
     addConstructMetadata(this, props);
 
-    const ipv4CidrBlock = props.ipv4CidrBlock.cidr;
+    const ipv4CidrBlock = props.ipv4CidrBlock?.cidr;
     const ipv6CidrBlock = props.ipv6CidrBlock?.cidr;
 
-    if (!checkCidrRanges(props.vpc, props.ipv4CidrBlock.cidr)) {
+    if (props.ipv4CidrBlock && !checkCidrRanges(props.vpc, props.ipv4CidrBlock.cidr)) {
       throw new ValidationError('CIDR block should be within the range of VPC', this);
     }
 
     let overlap: boolean = false;
     let overlapIpv6: boolean = false;
 
-    if (!Token.isUnresolved(props.ipv4CidrBlock)) {
+    if (props.ipv4CidrBlock && !Token.isUnresolved(props.ipv4CidrBlock)) {
       overlap = validateOverlappingCidrRanges(props.vpc, props.ipv4CidrBlock.cidr);
     }
 
@@ -312,7 +345,7 @@ export class SubnetV2 extends Resource implements ISubnetV2 {
     });
 
     this.node.defaultChild = subnet;
-    this.ipv4CidrBlock = props.ipv4CidrBlock.cidr;
+    this.ipv4CidrBlock = props.ipv4CidrBlock?.cidr;
     this.ipv6CidrBlock = props.ipv6CidrBlock?.cidr;
     this.subnetId = subnet.ref;
     this.availabilityZone = props.availabilityZone;
@@ -400,7 +433,7 @@ export interface SubnetV2Attributes {
    *
    * @default - No CIDR information, cannot use CIDR filter features
    */
-  readonly ipv4CidrBlock: string;
+  readonly ipv4CidrBlock?: string;
 
   /**
    * The IPv4 CIDR block associated with the subnet
@@ -511,8 +544,12 @@ function checkCidrRanges(vpc: IVpcV2, cidrRange: string) {
         vpcCidrBlock.push(ipAddress.cidrBlock);
       }
     }
-    const cidrs = vpcCidrBlock.map(cidr => new CidrBlock(cidr));
-    allCidrs.push(...cidrs);
+
+    vpcCidrBlock.forEach(cidr => {
+      if (cidr) {
+        allCidrs.push(new CidrBlock(cidr));
+      }
+    });
   }
 
   // Secondary IP addresses assoicated using IPAM IPv4 range
@@ -554,6 +591,9 @@ function validateOverlappingCidrRanges(vpc: IVpcV2, ipv4CidrBlock: string): bool
   const inputIpMap: [string, string] = [inputRange.minIp(), inputRange.maxIp()];
 
   for (const subnet of allSubnets) {
+    if (!subnet.ipv4CidrBlock) {
+      continue;
+    }
     const cidrBlock = new CidrBlock(subnet.ipv4CidrBlock);
     ipMap.push([cidrBlock.minIp(), cidrBlock.maxIp()]);
   }
@@ -605,4 +645,212 @@ function validateOverlappingCidrRangesipv6(vpc: IVpcV2, ipv6CidrBlock: string): 
   }
 
   return result;
+}
+
+/**
+ * Contains logic which chooses a set of subnets from a larger list, in conjunction
+ * with SubnetSelection, to determine where to place AWS resources such as VPC
+ * endpoints, EC2 instances, etc.
+ */
+export abstract class SubnetFilter {
+  /**
+   * Chooses subnets by id.
+   */
+  public static byIds(subnetIds: string[]): SubnetFilter {
+    return new SubnetIdSubnetFilter(subnetIds);
+  }
+
+  /**
+   * Chooses subnets which are in one of the given availability zones.
+   */
+  public static availabilityZones(availabilityZones: string[]): SubnetFilter {
+    return new AvailabilityZoneSubnetFilter(availabilityZones);
+  }
+
+  /**
+   * Chooses subnets such that there is at most one per availability zone.
+   */
+  public static onePerAz(): SubnetFilter {
+    return new OnePerAZSubnetFilter();
+  }
+
+  /**
+   * Chooses subnets which contain any of the specified IP addresses.
+   */
+  public static containsIpAddresses(ipv4addrs: string[]): SubnetFilter {
+    return new ContainsIpAddressesSubnetFilter(ipv4addrs);
+  }
+
+  /**
+   * Chooses subnets which have the provided CIDR netmask.
+   */
+  public static byCidrMask(mask: number): SubnetFilter {
+    return new CidrMaskSubnetFilter(mask);
+  }
+
+  /**
+   * Chooses subnets which are inside any of the specified CIDR range.
+   * @param cidrs List of CIDR ranges to filter subnets from
+   */
+  public static byCidrRanges(cidrs: string[]): SubnetFilter {
+    return new CidrRangesSubnetFilter(cidrs);
+  }
+
+  /**
+   * Executes the subnet filtering logic, returning a filtered set of subnets.
+   */
+  public selectSubnets(_subnets: ISubnetV2[]): ISubnetV2[] {
+    throw new UnscopedValidationError('Cannot select subnets with an abstract SubnetFilter. `selectSubnets` needs to be implmemented.');
+  }
+}
+
+/**
+ * Chooses subnets which are in one of the given availability zones.
+ */
+class AvailabilityZoneSubnetFilter extends SubnetFilter {
+  private readonly availabilityZones: string[];
+
+  constructor(availabilityZones: string[]) {
+    super();
+    this.availabilityZones = availabilityZones;
+  }
+
+  /**
+   * Executes the subnet filtering logic.
+   */
+  public selectSubnets(subnets: ISubnetV2[]): ISubnetV2[] {
+    return subnets.filter(s => this.availabilityZones.includes(s.availabilityZone));
+  }
+}
+
+/**
+ * Chooses subnets such that there is at most one per availability zone.
+ */
+class OnePerAZSubnetFilter extends SubnetFilter {
+  constructor() {
+    super();
+  }
+
+  /**
+   * Executes the subnet filtering logic.
+   */
+  public selectSubnets(subnets: ISubnetV2[]): ISubnetV2[] {
+    return this.retainOnePerAz(subnets);
+  }
+
+  private retainOnePerAz(subnets: ISubnetV2[]): ISubnetV2[] {
+    const azsSeen = new Set<string>();
+    return subnets.filter(subnet => {
+      if (azsSeen.has(subnet.availabilityZone)) { return false; }
+      azsSeen.add(subnet.availabilityZone);
+      return true;
+    });
+  }
+}
+
+/**
+ * Chooses subnets which contain any of the specified IP addresses.
+ */
+class ContainsIpAddressesSubnetFilter extends SubnetFilter {
+  private readonly ipAddresses: string[];
+
+  constructor(ipAddresses: string[]) {
+    super();
+    this.ipAddresses = ipAddresses;
+  }
+
+  /**
+   * Executes the subnet filtering logic.
+   */
+  public selectSubnets(subnets: ISubnetV2[]): ISubnetV2[] {
+    return this.retainByIp(subnets, this.ipAddresses);
+  }
+
+  private retainByIp(subnets: ISubnetV2[], ips: string[]): ISubnetV2[] {
+    const cidrBlockObjs = ips.map(ip => {
+      const ipNum = NetworkUtils.ipToNum(ip);
+      return new CidrBlock(ipNum, 32);
+    });
+    return subnets.filter(s => {
+      if (!s.ipv4CidrBlock) {
+        return false;
+      }
+      const subnetCidrBlock = new CidrBlock(s.ipv4CidrBlock);
+      return cidrBlockObjs.some(cidr => subnetCidrBlock.containsCidr(cidr));
+    });
+  }
+}
+
+/**
+ * Chooses subnets based on the subnetId
+ */
+class SubnetIdSubnetFilter extends SubnetFilter {
+  private readonly subnetIds: string[];
+
+  constructor(subnetIds: string[]) {
+    super();
+    this.subnetIds = subnetIds;
+  }
+
+  /**
+   * Executes the subnet filtering logic.
+   */
+  public selectSubnets(subnets: ISubnetV2[]): ISubnetV2[] {
+    return subnets.filter(subnet => this.subnetIds.includes(Token.asString(subnet.subnetId)));
+  }
+}
+
+/**
+ * Chooses subnets based on the CIDR Netmask
+ */
+class CidrMaskSubnetFilter extends SubnetFilter {
+  private readonly mask: number;
+
+  constructor(mask: number) {
+    super();
+    this.mask = mask;
+  }
+
+  /**
+   * Executes the subnet filtering logic.
+   */
+  public selectSubnets(subnets: ISubnetV2[]): ISubnetV2[] {
+    return subnets.filter(subnet => {
+      if (!subnet.ipv4CidrBlock) {
+        return false;
+      }
+      const subnetCidr = new CidrBlock(subnet.ipv4CidrBlock);
+      return subnetCidr.mask === this.mask;
+    });
+  }
+}
+
+/**
+ * Chooses subnets which are inside any of the specified CIDR range.
+ */
+class CidrRangesSubnetFilter extends SubnetFilter {
+  private readonly cidrRanges: string[];
+
+  constructor(cidrRanges: string[]) {
+    super();
+    this.cidrRanges = cidrRanges;
+  }
+
+  /**
+   * Executes the subnet filtering logic.
+   */
+  public selectSubnets(subnets: ISubnetV2[]): ISubnetV2[] {
+    return this.checkCidrRanges(subnets, this.cidrRanges);
+  }
+
+  private checkCidrRanges(subnets: ISubnetV2[], cidrRanges: string[]): ISubnetV2[] {
+    const cidrs = cidrRanges.map(cidr => new CidrBlock(cidr));
+    return subnets.filter(s => {
+      if (!s.ipv4CidrBlock) {
+        return false;
+      }
+      const subnetCidrBlock = new CidrBlock(s.ipv4CidrBlock);
+      return cidrs.some(cidr => cidr.containsCidr(subnetCidrBlock));
+    });
+  }
 }

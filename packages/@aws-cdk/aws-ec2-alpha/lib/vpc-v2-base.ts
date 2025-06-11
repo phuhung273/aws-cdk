@@ -1,11 +1,14 @@
-import { Aws, Resource, Annotations, ValidationError } from 'aws-cdk-lib';
-import { IVpc, ISubnet, SubnetSelection, SelectedSubnets, EnableVpnGatewayOptions, VpnGateway, VpnConnectionType, CfnVPCGatewayAttachment, CfnVPNGatewayRoutePropagation, VpnConnectionOptions, VpnConnection, ClientVpnEndpointOptions, ClientVpnEndpoint, InterfaceVpcEndpointOptions, InterfaceVpcEndpoint, GatewayVpcEndpointOptions, GatewayVpcEndpoint, FlowLogOptions, FlowLog, FlowLogResourceType, SubnetType, SubnetFilter } from 'aws-cdk-lib/aws-ec2';
+import { Aws, Resource, Annotations, ValidationError, IResource } from 'aws-cdk-lib';
+import { EnableVpnGatewayOptions, VpnGateway, VpnConnectionType, CfnVPCGatewayAttachment, CfnVPNGatewayRoutePropagation, VpnConnectionOptions, ClientVpnEndpointOptions, InterfaceVpcEndpointOptions, GatewayVpcEndpointOptions, FlowLogOptions, FlowLog, SubnetType } from 'aws-cdk-lib/aws-ec2';
 import { allRouteTableIds, flatten, subnetGroupNameFromConstructId } from './util';
 import { IDependable, Dependable, IConstruct, DependencyGroup } from 'constructs';
 import { EgressOnlyInternetGateway, InternetGateway, NatConnectivityType, NatGateway, NatGatewayOptions, Route, VPCPeeringConnection, VPCPeeringConnectionOptions, VPNGatewayV2 } from './route';
-import { ISubnetV2 } from './subnet-v2';
+import { ISubnetV2, SubnetFilter } from './subnet-v2';
 import { AccountPrincipal, Effect, PolicyStatement, Role } from 'aws-cdk-lib/aws-iam';
 import { IVPCCidrBlock } from './vpc-v2';
+import { GatewayVpcEndpoint, InterfaceVpcEndpoint } from './vpc-endpoints';
+import { ClientVpnEndpoint } from './client-vpn-endpoint';
+import { VpnConnection } from './vpn';
 
 /**
  * Options to define EgressOnlyInternetGateway for VPC
@@ -105,7 +108,19 @@ export interface VPNGatewayV2Options {
  * Placeholder to see what extra props we might need,
  * will be added to original IVPC
  */
-export interface IVpcV2 extends IVpc {
+export interface IVpcV2 extends IResource {
+  /**
+   * Identifier for this VPC
+   * @attribute
+   */
+  readonly vpcId: string;
+
+  /**
+   * ARN for this VPC
+   * @attribute
+   */
+  readonly vpcArn: string;
+
   /**
    * The secondary CIDR blocks associated with the VPC.
    *
@@ -119,7 +134,22 @@ export interface IVpcV2 extends IVpc {
    * current prop vpcCidrBlock refers to the token value
    * For more information, see the {@link https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html#vpc-sizing-ipv4}.
    */
-  readonly ipv4CidrBlock: string;
+  readonly ipv4CidrBlock?: string;
+
+  /**
+   * List of public subnets in this VPC
+   */
+  readonly publicSubnets: ISubnetV2[];
+
+  /**
+   * List of private subnets in this VPC
+   */
+  readonly privateSubnets: ISubnetV2[];
+
+  /**
+   * List of isolated subnets in this VPC
+   */
+  readonly isolatedSubnets: ISubnetV2[];
 
   /**
    * Optional to override inferred region
@@ -127,6 +157,11 @@ export interface IVpcV2 extends IVpc {
    * @default - current stack's environment region
    */
   readonly region: string;
+
+  /**
+   * Identifier for the VPN gateway
+   */
+  readonly vpnGatewayId?: string;
 
   /**
    * The ID of the AWS account that owns the VPC
@@ -147,6 +182,19 @@ export interface IVpcV2 extends IVpc {
    * @attribute
    */
   readonly vpcName?: string;
+
+  /**
+   * Return information on the subnets appropriate for the given selection strategy
+   *
+   * Requires that at least one subnet is matched, throws a descriptive
+   * error message otherwise.
+   */
+  selectSubnets(selection?: SubnetSelection): SelectedSubnets;
+
+  /**
+   * Adds a VPN Gateway to this VPC
+   */
+  enableVpnGateway(options: EnableVpnGatewayOptions): void;
 
   /**
    * Add an Egress only Internet Gateway to current VPC.
@@ -193,6 +241,134 @@ export interface IVpcV2 extends IVpc {
    * For more information, see the {@link https://docs.aws.amazon.com/vpc/latest/peering/what-is-vpc-peering.html}.
    */
   createPeeringConnection(id: string, options: VPCPeeringConnectionOptions): VPCPeeringConnection;
+
+  /**
+   * Adds a new interface endpoint to this VPC
+   */
+  addInterfaceEndpoint(id: string, options: InterfaceVpcEndpointOptions): InterfaceVpcEndpoint;
+}
+
+/**
+ * Customize subnets that are selected for placement of ENIs
+ *
+ * Constructs that allow customization of VPC placement use parameters of this
+ * type to provide placement settings.
+ *
+ * By default, the instances are placed in the private subnets.
+ */
+export interface SubnetSelection {
+  /**
+   * Select all subnets of the given type
+   *
+   * At most one of `subnetType` and `subnetGroupName` can be supplied.
+   *
+   * @default SubnetType.PRIVATE_WITH_EGRESS (or ISOLATED or PUBLIC if there are no PRIVATE_WITH_EGRESS subnets)
+   */
+  readonly subnetType?: SubnetType;
+
+  /**
+   * Select subnets only in the given AZs.
+   *
+   * @default no filtering on AZs is done
+   */
+  readonly availabilityZones?: string[];
+
+  /**
+   * Select the subnet group with the given name
+   *
+   * Select the subnet group with the given name. This only needs
+   * to be used if you have multiple subnet groups of the same type
+   * and you need to distinguish between them. Otherwise, prefer
+   * `subnetType`.
+   *
+   * This field does not select individual subnets, it selects all subnets that
+   * share the given subnet group name. This is the name supplied in
+   * `subnetConfiguration`.
+   *
+   * At most one of `subnetType` and `subnetGroupName` can be supplied.
+   *
+   * @default - Selection by type instead of by name
+   */
+  readonly subnetGroupName?: string;
+
+  /**
+   * Alias for `subnetGroupName`
+   *
+   * Select the subnet group with the given name. This only needs
+   * to be used if you have multiple subnet groups of the same type
+   * and you need to distinguish between them.
+   *
+   * @deprecated Use `subnetGroupName` instead
+   */
+  readonly subnetName?: string;
+
+  /**
+   * If true, return at most one subnet per AZ
+   *
+   * @default false
+   */
+  readonly onePerAz?: boolean;
+
+  /**
+   * List of provided subnet filters.
+   *
+   * @default - none
+   */
+  readonly subnetFilters?: SubnetFilter[];
+
+  /**
+   * Explicitly select individual subnets
+   *
+   * Use this if you don't want to automatically use all subnets in
+   * a group, but have a need to control selection down to
+   * individual subnets.
+   *
+   * Cannot be specified together with `subnetType` or `subnetGroupName`.
+   *
+   * @default - Use all subnets in a selected group (all private subnets by default)
+   */
+  readonly subnets?: ISubnetV2[];
+}
+
+/**
+ * Result of selecting a subset of subnets from a VPC
+ */
+export interface SelectedSubnets {
+  /**
+   * The subnet IDs
+   */
+  readonly subnetIds: string[];
+
+  /**
+   * The respective AZs of each subnet
+   */
+  readonly availabilityZones: string[];
+
+  /**
+   * Dependency representing internet connectivity for these subnets
+   */
+  readonly internetConnectivityEstablished: IDependable;
+
+  /**
+   * Selected subnet objects
+   */
+  readonly subnets: ISubnetV2[];
+
+  /**
+   * Whether any of the given subnets are from the VPC's public subnets.
+   */
+  readonly hasPublic: boolean;
+
+  /**
+   * The subnet selection is not actually real yet
+   *
+   * If this value is true, don't validate anything about the subnets. The count
+   * or identities are not known yet, and the validation will most likely fail
+   * which will prevent a successful lookup.
+   *
+   * @default false
+   */
+  readonly isPendingLookup?: boolean;
 }
 
 /**
@@ -219,17 +395,17 @@ export abstract class VpcV2Base extends Resource implements IVpcV2 {
   /**
    * List of public subnets in this VPC
    */
-  public readonly publicSubnets: ISubnet[] = [];
+  public readonly publicSubnets: ISubnetV2[] = [];
 
   /**
    * List of private subnets in this VPC
    */
-  public readonly privateSubnets: ISubnet[] = [];
+  public readonly privateSubnets: ISubnetV2[] = [];
 
   /**
    * List of isolated subnets in this VPC
    */
-  public abstract readonly isolatedSubnets: ISubnet[];
+  public abstract readonly isolatedSubnets: ISubnetV2[];
 
   /**
    * AZs for this VPC
@@ -260,7 +436,7 @@ export abstract class VpcV2Base extends Resource implements IVpcV2 {
    * current prop vpcCidrBlock refers to the token value
    * For more information, see the {@link https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html#vpc-sizing-ipv4}.
    */
-  public abstract readonly ipv4CidrBlock: string;
+  public abstract readonly ipv4CidrBlock?: string;
 
   /**
    * VpcName to be used for tagging its components
@@ -572,7 +748,10 @@ export abstract class VpcV2Base extends Resource implements IVpcV2 {
    */
   public addFlowLog(id: string, options?: FlowLogOptions): FlowLog {
     return new FlowLog(this, id, {
-      resourceType: FlowLogResourceType.fromVpc(this),
+      resourceType: {
+        resourceType: 'VPC',
+        resourceId: this.vpcId,
+      },
       ...options,
     });
   }
@@ -641,7 +820,7 @@ export abstract class VpcV2Base extends Resource implements IVpcV2 {
   /**
    * Return the subnets appropriate for the placement strategy
    */
-  protected selectSubnetObjects(selection: SubnetSelection = {}): ISubnet[] {
+  protected selectSubnetObjects(selection: SubnetSelection = {}): ISubnetV2[] {
     selection = this.reifySelectionDefaults(selection);
 
     if (selection.subnets !== undefined) {
@@ -663,7 +842,7 @@ export abstract class VpcV2Base extends Resource implements IVpcV2 {
     return subnets;
   }
 
-  private applySubnetFilters(subnets: ISubnet[], filters: SubnetFilter[]): ISubnet[] {
+  private applySubnetFilters(subnets: ISubnetV2[], filters: SubnetFilter[]): ISubnetV2[] {
     let filtered = subnets;
     // Apply each filter in sequence
     for (const filter of filters) {
@@ -684,9 +863,9 @@ export abstract class VpcV2Base extends Resource implements IVpcV2 {
     return subnets;
   }
 
-  private selectSubnetObjectsByType(subnetType: SubnetType): ISubnet[] {
+  private selectSubnetObjectsByType(subnetType: SubnetType): ISubnetV2[] {
     type DeprecatedSubnetType = 'Deprecated_Isolated' | 'Deprecated_Private';
-    const allSubnets: { [key in SubnetType | DeprecatedSubnetType]?: ISubnet[] } = {
+    const allSubnets: { [key in SubnetType | DeprecatedSubnetType]?: ISubnetV2[] } = {
       [SubnetType.PRIVATE_ISOLATED]: this.isolatedSubnets,
       ['Deprecated_Isolated']: this.isolatedSubnets,
       [SubnetType.PRIVATE_WITH_NAT]: this.privateSubnets,

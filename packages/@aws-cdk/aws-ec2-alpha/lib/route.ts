@@ -570,6 +570,10 @@ export class VPCPeeringConnection extends Resource implements IRouteTarget {
    * @internal
    */
   private validateVpcCidrOverlap(requestorVpc: IVpcV2, acceptorVpc: IVpcV2): boolean {
+    if (!requestorVpc.ipv4CidrBlock || !acceptorVpc.ipv4CidrBlock) {
+      return false;
+    }
+
     const requestorCidrs = [requestorVpc.ipv4CidrBlock];
     const acceptorCidrs = [acceptorVpc.ipv4CidrBlock];
 
@@ -586,6 +590,10 @@ export class VPCPeeringConnection extends Resource implements IRouteTarget {
     }
 
     for (const requestorCidr of requestorCidrs) {
+      if (!requestorCidr) {
+        continue;
+      }
+
       const requestorRange = new CidrBlock(requestorCidr);
       const requestorIpRange: [string, string] = [requestorRange.minIp(), requestorRange.maxIp()];
 
