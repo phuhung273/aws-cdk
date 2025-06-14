@@ -378,6 +378,10 @@ export class CodePipeline extends PipelineBase {
    * instead of creating a new role for each action
    */
   public readonly usePipelineRoleForActions: boolean;
+  /**
+   * Bucket used to store output artifacts
+   */
+  public readonly artifactBucket?: s3.IBucket;
 
   private _pipeline?: cp.Pipeline;
   private artifacts = new ArtifactMap();
@@ -414,6 +418,7 @@ export class CodePipeline extends PipelineBase {
     this.useChangeSets = props.useChangeSets ?? true;
     this.stackOutputs = new StackOutputsMap(this);
     this.usePipelineRoleForActions = props.usePipelineRoleForActions ?? false;
+    this.artifactBucket = props.artifactBucket;
   }
 
   /**

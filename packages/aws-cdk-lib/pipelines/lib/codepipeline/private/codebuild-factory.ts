@@ -363,6 +363,10 @@ export class CodeBuildFactory implements ICodePipelineActionFactory {
       })),
     }));
 
+    // if (actionRole && options.pipeline.artifactBucket?.encryptionKey) {
+    //   options.pipeline.artifactBucket.encryptionKey.grant(actionRole, 'kms:GenerateDataKey');
+    // }
+
     this._project = project;
 
     return { runOrdersConsumed: 1, project };
