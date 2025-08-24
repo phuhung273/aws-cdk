@@ -111,6 +111,12 @@ export class AlarmRule {
   private static concat(operator: Operator, ...operands: IAlarmRule[]): IAlarmRule {
     return new class implements IAlarmRule {
       public renderAlarmRule(): string {
+        if (operands.length === 0) {
+          // eslint-disable-next-line no-console
+          console.warn(`Did not detect any operands for AlarmRule.${operator === Operator.AND ? 'allOf' : 'anyOf'}(), defaulting to FALSE`);
+          return 'FALSE';
+        }
+
         const expression = operands
           .map(operand => `${operand.renderAlarmRule()}`)
           .join(` ${operator} `);

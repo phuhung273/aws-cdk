@@ -1,8 +1,12 @@
 import { App, CfnOutput, Stack, StackProps } from 'aws-cdk-lib';
-import { IntegTest } from '@aws-cdk/integ-tests-alpha';
-import { Alarm, AlarmRule, AlarmState, CompositeAlarm, Metric } from 'aws-cdk-lib/aws-cloudwatch';
+import { ExpectedResult, IntegTest } from '@aws-cdk/integ-tests-alpha';
+import { Alarm, AlarmRule, AlarmState, CompositeAlarm, IAlarm, Metric } from 'aws-cdk-lib/aws-cloudwatch';
+import { Match } from 'aws-cdk-lib/assertions';
 
 class CompositeAlarmIntegrationTest extends Stack {
+  public emptyAnyOf: IAlarm;
+  public emptyAllOf: IAlarm;
+
   constructor(scope: App, id: string, props?: StackProps) {
     super(scope, id, props);
 
@@ -59,6 +63,14 @@ class CompositeAlarmIntegrationTest extends Stack {
       alarmRule,
       actionsSuppressor: alarm5,
     });
+
+    this.emptyAnyOf = new CompositeAlarm(this, 'EmptyAnyOf', {
+      alarmRule: AlarmRule.anyOf(),
+    });
+
+    this.emptyAllOf = new CompositeAlarm(this, 'EmptyAllOf', {
+      alarmRule: AlarmRule.allOf(),
+    });
   }
 }
 
@@ -75,9 +87,31 @@ class CompositeAlarmImportIntegrationTest extends Stack {
 
 const app = new App();
 
-new IntegTest(app, 'cdk-integ-composite-alarm', {
-  testCases: [
-    new CompositeAlarmIntegrationTest(app, 'CompositeAlarmIntegrationTest'),
-    new CompositeAlarmImportIntegrationTest(app, 'CompositeAlarmImportIntegrationTest'),
-  ],
+const integration = new CompositeAlarmIntegrationTest(app, 'CompositeAlarmIntegrationTest');
+const importIntegration = new CompositeAlarmImportIntegrationTest(app, 'CompositeAlarmImportIntegrationTest');
+
+const integTest = new IntegTest(app, 'cdk-integ-composite-alarm', {
+  testCases: [integration, importIntegration],
 });
+
+integTest.assertions.awsApiCall('cloudwatch', 'DescribeAlarms', {
+  AlarmNames: [
+    integration.emptyAllOf.alarmName,
+    integration.emptyAnyOf.alarmName,
+  ],
+  AlarmTypes: ['CompositeAlarm'],
+  StateValue: 'OK',
+}).expect(ExpectedResult.objectLike({
+  CompositeAlarms: Match.arrayWith([
+    Match.objectLike({
+      AlarmArn: integration.emptyAllOf.alarmArn,
+      AlarmRule: 'FALSE',
+      StateValue: 'OK',
+    }),
+    Match.objectLike({
+      AlarmArn: integration.emptyAnyOf.alarmArn,
+      AlarmRule: 'FALSE',
+      StateValue: 'OK',
+    }),
+  ]),
+}));
